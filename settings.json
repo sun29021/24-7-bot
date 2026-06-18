@@ -26,18 +26,6 @@
       "enabled": true,
       "sneak": true
     },
-    "chat-messages": {
-      "enabled": true,
-      "repeat": true,
-      "repeat-delay": 120,
-      "messages": [
-        "Hello everyone!",
-        "How's everyone doing?",
-        "Have a great day!",
-        "Good luck out there!",
-        "Hope you're having fun!"
-      ]
-    },
     "chat-log": true,
     "auto-reconnect": true,
     "auto-reconnect-delay": 2000,
