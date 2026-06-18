@@ -1330,6 +1330,237 @@ function createBot() {
       addLog(`${username}: ${message}`);
     });
 
+    // ============================================================
+// NEKO DEATH HANDLER
+// ============================================================
+bot.on('death', async (reason) => {
+  try {
+    const event = {
+      type: 'death',
+      data: {
+        killedBy: reason || 'unknown',
+        location: bot.entity ? bot.entity.position : null,
+        health: 0,
+        confidence: memory.getConfidenceLevel()
+      }
+    };
+    
+    const analysis = await nekoChatHandler.analyzeGameEvent(event);
+    
+    if (analysis && analysis.shouldChat && analysis.message) {
+      setTimeout(() => {
+        bot.chat(analysis.message);
+        addLog(`[NEKO Event] Death reaction: ${analysis.message}`);
+      }, 500);
+    }
+  } catch (e) {
+    console.log('[NEKO] Death event error:', e.message);
+  }
+});
+
+    // ============================================================
+// NEKO CRITICAL DAMAGE HANDLER
+// ============================================================
+let lastHealthWarning = 0;
+bot.on('health', async () => {
+  if (!bot || bot.health >= 4) return; // Only trigger if health < 4 hearts (20%)
+  
+  const now = Date.now();
+  if (now - lastHealthWarning < 20000) return; // 20s cooldown
+  
+  try {
+    lastHealthWarning = now;
+    
+    const event = {
+      type: 'damage',
+      data: {
+        health: bot.health,
+        maxHealth: 20,
+        from: 'unknown', // Would need additional tracking for exact damage source
+        location: bot.entity ? bot.entity.position : null
+      }
+    };
+    
+    const analysis = await nekoChatHandler.analyzeGameEvent(event);
+    
+    if (analysis && analysis.shouldChat && analysis.message) {
+      bot.chat(analysis.message);
+      addLog(`[NEKO Event] Damage reaction (health ${bot.health}/20): ${analysis.message}`);
+    }
+  } catch (e) {
+    console.log('[NEKO] Damage event error:', e.message);
+  }
+});
+
+    // ============================================================
+// HELPER: GET NEARBY MOBS
+// ============================================================
+function getNearbyMobs(radiusBlocks = 20) {
+  if (!bot || !bot.entities) return [];
+  
+  const playerPos = bot.entity.position;
+  const mobs = [];
+  
+  for (const id in bot.entities) {
+    const entity = bot.entities[id];
+    if (!entity) continue;
+    
+    // Filter for mobs (living entities that aren't players or NEKO)
+    const isMob = entity.type === 'mob' || entity.name;
+    const isNotSelf = entity.username !== bot.username;
+    const isNotPlayer = entity.type !== 'player' && entity.username === undefined;
+    
+    if (isMob && isNotSelf && isNotPlayer) {
+      const dist = playerPos.distanceTo(entity.position);
+      if (dist < radiusBlocks) {
+        mobs.push({
+          name: entity.name || 'unknown',
+          type: entity.type,
+          distance: Math.round(dist),
+          position: entity.position
+        });
+      }
+    }
+  }
+  
+  return mobs;
+}
+    // ============================================================
+// NEKO MOB ENCOUNTER HANDLER
+// ============================================================
+let lastMobWarning = 0;
+addInterval(() => {
+  if (!bot || !botState.connected) return;
+  
+  const mobs = getNearbyMobs(20);
+  const now = Date.now();
+  
+  if (mobs.length > 0 && now - lastMobWarning > 25000) { // 25s cooldown
+    try {
+      lastMobWarning = now;
+      
+      const dangerousMobs = ['creeper', 'enderman', 'cave_spider', 'phantom', 'drowned', 'warden'];
+      const hasDangerousMob = mobs.some(m => 
+        dangerousMobs.some(dm => m.name.toLowerCase().includes(dm))
+      );
+      
+      // Only analyze if dangerous or if bot is confident enough
+      const confidence = memory.data.confidenceLevel;
+      if (hasDangerousMob || confidence > 50) {
+        const event = {
+          type: 'mob_encounter',
+          data: {
+            mobs: mobs,
+            mobCount: mobs.length,
+            distance: mobs[0].distance,
+            closestMob: mobs[0].name
+          }
+        };
+        
+        const analysis = await nekoChatHandler.analyzeGameEvent(event);
+        
+        if (analysis && analysis.shouldChat && analysis.message) {
+          bot.chat(analysis.message);
+          addLog(`[NEKO Event] Mob encounter (${mobs.length} mobs): ${analysis.message}`);
+        }
+      }
+    } catch (e) {
+      console.log('[NEKO] Mob event error:', e.message);
+    }
+  }
+}, 2000); // Check every 2 seconds for nearby mobs
+
+    // ============================================================
+// NEKO MINING TRACKER HANDLER
+// ============================================================
+// Track what we're mining
+let miningTarget = null;
+let mineStartTime = 0;
+
+bot.on('diggingCompleted', (block) => {
+  try {
+    if (!block || !block.name) return;
+    
+    const oreType = block.name;
+    const valuableOres = [
+      'diamond_ore', 'emerald_ore', 'ancient_debris', 'gold_ore', 'iron_ore',
+      'lapis_lazuli_ore', 'deepslate_diamond_ore', 'deepslate_emerald_ore', 'deepslate_gold_ore'
+    ];
+    
+    // Only chat about valuable ores
+    if (valuableOres.includes(oreType)) {
+      (async () => {
+        const event = {
+          type: 'mining_success',
+          data: {
+            ore: oreType,
+            quantity: 1,
+            totalCollected: memory.data.inventory[oreType] || 0,
+            location: bot.entity ? bot.entity.position : null
+          }
+        };
+        
+        const analysis = await nekoChatHandler.analyzeGameEvent(event);
+        
+        if (analysis && analysis.shouldChat && analysis.message) {
+          setTimeout(() => {
+            bot.chat(analysis.message);
+            addLog(`[NEKO Event] Mined ${oreType}: ${analysis.message}`);
+          }, 300);
+        }
+      })();
+    }
+  } catch (e) {
+    console.log('[NEKO] Mining event error:', e.message);
+  }
+});
+
+    // ============================================================
+// NEKO DISCOVERY HANDLER (Optional)
+// ============================================================
+// Track visited biomes to detect discoveries
+let visitedBiomes = new Set();
+let lastBiomeCheck = 0;
+
+addInterval(() => {
+  if (!bot || !botState.connected) return;
+  
+  try {
+    // Get current biome from bot state
+    // Note: biomes require Prismarine data, simplified here
+    const pos = bot.entity.position;
+    const biomeString = `${Math.floor(pos.x)},${Math.floor(pos.z)}`; // Simplified
+    
+    const now = Date.now();
+    if (!visitedBiomes.has(biomeString) && now - lastBiomeCheck > 30000) {
+      lastBiomeCheck = now;
+      visitedBiomes.add(biomeString);
+      
+      (async () => {
+        const event = {
+          type: 'discovery',
+          data: {
+            discovery: 'new area',
+            details: `Found new area around X${Math.floor(pos.x)} Z${Math.floor(pos.z)}`,
+            location: pos
+          }
+        };
+        
+        const analysis = await nekoChatHandler.analyzeGameEvent(event);
+        
+        if (analysis && analysis.shouldChat && analysis.message) {
+          bot.chat(analysis.message);
+          addLog(`[NEKO Event] Discovery: ${analysis.message}`);
+        }
+      })();
+    }
+  } catch (e) {
+    console.log('[NEKO] Discovery event error:', e.message);
+  }
+}, 10000); // Check every 10 seconds
+
+    
+
     // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'
     // so that 'end' is the single source of reconnect truth, preventing double-trigger.
     bot.on("kicked", (reason) => {
