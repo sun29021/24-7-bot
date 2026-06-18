@@ -8,6 +8,9 @@ const config = require("./settings.json");
 const express = require("express");
 const http = require("http");
 const https = require("https");
+const nekoChatHandler = require('./nekoChatHandler');
+const memory = require('./memory');
+const nekoBehavior = require('./nekoBehavior');
 
 // ============================================================
 // EXPRESS SERVER - Keep Render/Aternos alive
@@ -1248,6 +1251,10 @@ function createBot() {
       if (spawnHandled) return;
       spawnHandled = true;
 
+      // ADD THESE TWO LINES AT THE TOP:
+      memory.data.daysAlive++;
+      memory.saveMemory();
+
       clearBotTimeouts();
       botState.connected = true;
       botState.lastActivity = Date.now();
@@ -1267,6 +1274,11 @@ function createBot() {
           0x4ade80,
         );
       }
+
+      // NEKO says hello
+      setTimeout(() => {
+        bot.chat('NEKO online! Let the adventure begin! 💅');
+      }, 1000);
 
       // FIX: use bot.version (auto-detected) instead of config value so minecraft-data always matches
       const mcData = require("minecraft-data")(bot.version);
@@ -1294,6 +1306,28 @@ function createBot() {
           addLog("[INFO] Bot is now in Creative Mode.");
         }
       });
+    });
+
+    // NEKO's main chat handler using nekoChatHandler module
+    bot.on('chat', async (username, message) => {
+      // Ignore NEKO's own messages
+      if (username === config.name) return;
+      
+      try {
+        // Get NEKO's response
+        const response = await nekoChatHandler.handlePlayerChat(username, message, bot);
+        
+        // Send after a small delay (more human-like)
+        setTimeout(() => {
+          bot.chat(response);
+        }, Math.random() * 500 + 300);
+        
+      } catch (error) {
+        console.log('[NEKO] Chat error:', error.message);
+      }
+      
+      // Keep chat logging
+      addLog(`${username}: ${message}`);
     });
 
     // FIX: 'kicked' fires before 'end'. Remove the scheduleReconnect from 'kicked'
@@ -2834,6 +2868,36 @@ function deathMessageModule(bot) {
 }
 
 // ============================================================
+// NEKO's health/danger tracker
+// ============================================================
+bot.on('health', () => {
+  if (bot.health < 3) {
+    if (memory && memory.recordNearDeath) {
+      memory.recordNearDeath();
+    }
+    const messages = [
+      "AHHHHH I'M DYING!! 😱",
+      "NO NO NO NOT LIKE THIS!!",
+      "HELP!! SOMEONE HELP ME!!"
+    ];
+    bot.chat(messages[Math.floor(Math.random() * messages.length)]);
+  }
+});
+
+// NEKO's inventory tracker
+bot.on('inventory', (inventory) => {
+  try {
+    if (memory && memory.collectItem) {
+      inventory.items().forEach(item => {
+        memory.collectItem(item.name, item.count);
+      });
+    }
+  } catch (e) {
+    // ignore
+  }
+});
+
+// ============================================================
 // CONSOLE COMMANDS
 // ============================================================
 const readline = require("readline");
@@ -3009,7 +3073,20 @@ process.on("SIGTERM", () => {
 });
 
 process.on("SIGINT", () => {
-  addLog("[System] SIGINT received — ignoring, bot will stay alive.");
+  addLog('[NEKO] Shutting down...');
+  if (memory && memory.saveMemory) {
+    memory.saveMemory();
+  }
+  console.log('[NEKO] Memory saved.');
+  process.exit(0);
+});
+
+// Save NEKO's memory before exit
+process.on('exit', () => {
+  console.log('[NEKO] Saving memory...');
+  if (memory && memory.saveMemory) {
+    memory.saveMemory();
+  }
 });
 
 // =============================
