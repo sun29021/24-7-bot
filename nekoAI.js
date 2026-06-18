@@ -1,4 +1,5 @@
 const https = require('https');
+const config = require('./settings.json');
 
 // NEKO Personality System
 const NEKO_PERSONALITY = `You are NEKO, a sassy girl Minecraft bot with a strong personality. 
@@ -37,9 +38,10 @@ RESPOND NATURALLY - Don't sound like a bot. Sound like a real person playing Min
 
 class NekoAI {
   constructor() {
-    this.groqApiKey = process.env.GROQ_API_KEY;
+    // Try to get API key from settings.json first, then from environment variables
+    this.groqApiKey = config.chat?.groqApiKey || process.env.GROQ_API_KEY;
     if (!this.groqApiKey) {
-      console.log('[NEKO] ⚠️  GROQ_API_KEY not set. Set it in your environment variables!');
+      console.log('[NEKO] ⚠️  GROQ_API_KEY not set. Add it to settings.json under chat.groqApiKey!');
       console.log('[NEKO] Get free API key at: https://console.groq.com/keys');
     }
   }
