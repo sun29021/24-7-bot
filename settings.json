@@ -84,6 +84,7 @@
     }
   },
   "chat": {
-    "respond": true
+    "respond": true,
+    "groqApiKey": "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"
   }
 }
