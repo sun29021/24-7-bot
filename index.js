@@ -1310,8 +1310,8 @@ function createBot() {
 
     // NEKO's main chat handler using nekoChatHandler module
     bot.on('chat', async (username, message) => {
-      // Ignore NEKO's own messages
-      if (username === config.name) return;
+      // Ignore NEKO's own messages (use bot.username instead of config.name to handle server-assigned casing)
+      if (username === bot.username) return;
       
       try {
         // Get NEKO's response
@@ -1394,6 +1394,38 @@ function createBot() {
       addLog(`[Bot] Error: ${msg}`);
       botState.errors.push({ type: "error", message: msg, time: Date.now() });
       // Don't reconnect on error - let 'end' event handle it
+    });
+
+    // ============================================================
+    // NEKO's health/danger tracker (MOVED INSIDE createBot to prevent undefined bot error)
+    // ============================================================
+    bot.on('health', () => {
+      if (bot.health < 3) {
+        if (memory && memory.recordNearDeath) {
+          memory.recordNearDeath();
+        }
+        const messages = [
+          "AHHHHH I'M DYING!! 😱",
+          "NO NO NO NOT LIKE THIS!!",
+          "HELP!! SOMEONE HELP ME!!"
+        ];
+        bot.chat(messages[Math.floor(Math.random() * messages.length)]);
+      }
+    });
+
+    // ============================================================
+    // NEKO's inventory tracker (MOVED INSIDE createBot to prevent undefined bot error)
+    // ============================================================
+    bot.on('inventory', (inventory) => {
+      try {
+        if (memory && memory.collectItem) {
+          inventory.items().forEach(item => {
+            memory.collectItem(item.name, item.count);
+          });
+        }
+      } catch (e) {
+        // ignore
+      }
     });
   } catch (err) {
     addLog(`[Bot] Failed to create bot: ${err.message}`);
@@ -2783,6 +2815,18 @@ function deathMessageModule(bot) {
   bot.on("chat", (username, message) => {
     if (!bot || username === bot.username) return;
 
+    // FIX: Skip if this is not a system/death message (only system messages have no visible player, or are death notifications)
+    // Death messages come from "server" or have specific death patterns with no player name before them
+    const isSystemMessage = !username || username.toLowerCase() === 'server' || 
+                           message.includes(' fell from ') || 
+                           message.includes(' drowned ') ||
+                           message.includes(' burned ') ||
+                           message.includes(' slain by ') ||
+                           message.includes(' killed by ') ||
+                           message.includes(' died ');
+    
+    if (!isSystemMessage) return; // Skip regular player chat - let NEKO handler deal with it
+
     try {
       // Detect death patterns
       const lowerMsg = message.toLowerCase();
@@ -2866,36 +2910,6 @@ function deathMessageModule(bot) {
     }
   });
 }
-
-// ============================================================
-// NEKO's health/danger tracker
-// ============================================================
-bot.on('health', () => {
-  if (bot.health < 3) {
-    if (memory && memory.recordNearDeath) {
-      memory.recordNearDeath();
-    }
-    const messages = [
-      "AHHHHH I'M DYING!! 😱",
-      "NO NO NO NOT LIKE THIS!!",
-      "HELP!! SOMEONE HELP ME!!"
-    ];
-    bot.chat(messages[Math.floor(Math.random() * messages.length)]);
-  }
-});
-
-// NEKO's inventory tracker
-bot.on('inventory', (inventory) => {
-  try {
-    if (memory && memory.collectItem) {
-      inventory.items().forEach(item => {
-        memory.collectItem(item.name, item.count);
-      });
-    }
-  } catch (e) {
-    // ignore
-  }
-});
 
 // ============================================================
 // CONSOLE COMMANDS
