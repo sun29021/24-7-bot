@@ -6,8 +6,8 @@
     "type": "offline"
   },
   "server": {
-    "ip": "solocloud.host",
-    "port": 25565,
+    "ip": "DJ_Kuddus.aternos.me",
+    "port": 33508,
     "version": "1.20.1",
     "try-creative": false
   },
