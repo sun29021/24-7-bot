@@ -2070,55 +2070,6 @@ function qaModule(bot) {
     "Game mechanics"
   ];
 
-  bot.on("chat", (username, message) => {
-    if (!bot || username === bot.username) return;
-
-    try {
-      const lowerMsg = message.toLowerCase();
-      
-      // Check if it's a question (ends with ? or starts with how/what/where/etc)
-      if (lowerMsg.includes("?") || 
-          lowerMsg.startsWith("how ") ||
-          lowerMsg.startsWith("what ") ||
-          lowerMsg.startsWith("where ") ||
-          lowerMsg.startsWith("when ") ||
-          lowerMsg.startsWith("why ") ||
-          lowerMsg.startsWith("can i ") ||
-          lowerMsg.startsWith("is ")) {
-        
-        // Search for answer in library
-        let answer = null;
-        
-        for (const [question, response] of Object.entries(qaLibrary)) {
-          if (lowerMsg.includes(question)) {
-            answer = response;
-            break;
-          }
-        }
-        
-        // If answer found, respond; otherwise tell what we can answer
-        if (answer && config.chat && config.chat.respond) {
-          setTimeout(() => {
-            bot.chat(answer);
-          }, 600 + Math.random() * 900);
-          
-          addLog(`[Q&A] Answered question from ${username}`);
-        } 
-        else if ((lowerMsg.includes("?") || lowerMsg.includes("ask")) && config.chat && config.chat.respond) {
-          // Only respond to questions we don't know to avoid spam
-          const helpMessage = `I can answer questions about: Server info, Spawn location, PvP/Rules, Building tips, Mining, Combat, and Server mechanics! Ask away! 📚`;
-          
-          setTimeout(() => {
-            bot.chat(helpMessage);
-          }, 600 + Math.random() * 900);
-          
-          addLog(`[Q&A] Question out of library from ${username}: ${message}`);
-        }
-      }
-    } catch (e) {
-      addLog("[Q&A Module] Error:", e.message);
-    }
-  });
 }
 
 // Hasib Roasting Module (Special Edition)
@@ -2223,26 +2174,7 @@ function hasibRoastModule(bot) {
   ];
 
   // Roast on every message from Ancention (but call him Hasib)
-  bot.on("chat", (username, message) => {
-    if (!bot || username === bot.username) return;
-
-    try {
-      // Check if it's Ancention (in-game name)
-      if (username.toLowerCase() === "ancention") {
-        if (config.chat && config.chat.respond) {
-          const randomRoast = hasibRoasts[Math.floor(Math.random() * hasibRoasts.length)];
-          
-          setTimeout(() => {
-            bot.chat(randomRoast);
-          }, 800 + Math.random() * 1200);
-
-          addLog(`[Hasib Roast] Roasted Hasib (Ancention): ${randomRoast}`);
-        }
-      }
-    } catch (e) {
-      addLog("[Hasib Roast Module] Error:", e.message);
-    }
-  });
+  
 
   // Roast when Ancention dies
   bot.on("chat", (username, message) => {
@@ -2359,80 +2291,6 @@ function achievementCongratsModule(bot) {
     "Did the wiki help? 👀"
   ];
 
-  bot.on("chat", (username, message) => {
-    if (!bot || username === bot.username) return;
-
-    try {
-      const lowerMsg = message.toLowerCase();
-      let shouldCongrats = false;
-
-      // Achievement detection patterns
-      if (
-        lowerMsg.includes("achievement") ||
-        lowerMsg.includes("advancement") ||
-        lowerMsg.includes("got an achievement") ||
-        lowerMsg.includes("unlocked") ||
-        lowerMsg.includes("made the advancement") ||
-        (lowerMsg.includes("has") && (
-          lowerMsg.includes("achieved") ||
-          lowerMsg.includes("completed") ||
-          lowerMsg.includes("finished")
-        ))
-      ) {
-        shouldCongrats = true;
-      }
-      // Accomplishment detection
-      else if (
-        lowerMsg.includes("i found diamonds") ||
-        lowerMsg.includes("got diamonds") ||
-        lowerMsg.includes("found diamonds") ||
-        lowerMsg.includes("built a") ||
-        lowerMsg.includes("made a") ||
-        lowerMsg.includes("constructed") ||
-        (lowerMsg.includes("defeated") && (
-          lowerMsg.includes("dragon") ||
-          lowerMsg.includes("wither") ||
-          lowerMsg.includes("boss")
-        )) ||
-        lowerMsg.includes("full diamond") ||
-        lowerMsg.includes("got netherite") ||
-        (lowerMsg.includes("beat") && lowerMsg.includes("game")) ||
-        lowerMsg.includes("killed the ender") ||
-        lowerMsg.includes("speedrun") ||
-        lowerMsg.includes("world record")
-      ) {
-        shouldCongrats = true;
-      }
-      // Success/accomplishment keywords
-      else if (
-        (lowerMsg.includes("finally") && lowerMsg.includes("done")) ||
-        (lowerMsg.includes("yay") || lowerMsg.includes("yes")) && 
-        (lowerMsg.includes("made") || lowerMsg.includes("got") || lowerMsg.includes("built")) ||
-        lowerMsg.includes("i'm done") ||
-        lowerMsg.includes("finished building") ||
-        lowerMsg.includes("completed") ||
-        lowerMsg.includes("we did it") ||
-        lowerMsg.includes("mission accomplished") ||
-        lowerMsg.includes("jackpot")
-      ) {
-        shouldCongrats = true;
-      }
-
-      // Send nonchalant congrats
-      if (shouldCongrats && config.chat && config.chat.respond) {
-        const randomCongrats = nonchalantCongrats[Math.floor(Math.random() * nonchalantCongrats.length)];
-        
-        // Small delay for natural conversation
-        setTimeout(() => {
-          bot.chat(randomCongrats);
-        }, 600 + Math.random() * 900);
-
-        addLog(`[Achievement] ${username} achieved something - Congratulated nonchalantly`);
-      }
-    } catch (e) {
-      addLog("[Achievement Module] Error:", e.message);
-    }
-  });
 }
 
 // Bot Death Rage-Bait Module
@@ -2571,64 +2429,7 @@ function roastModule(bot) {
     "Your hands must be controlled by lag ⏱️"
   ];
 
-  bot.on("chat", (username, message) => {
-    if (!bot || username === bot.username) return;
-
-    try {
-      const lowerMsg = message.toLowerCase();
-      let shouldRoast = false;
-
-      // Detect joke requests
-      if (
-        (lowerMsg.includes("give me a joke") ||
-        lowerMsg.includes("tell me a joke") ||
-        lowerMsg.includes("make me laugh") ||
-        lowerMsg.includes("tell a joke") ||
-        lowerMsg.includes("say a joke") ||
-        lowerMsg.includes("neko joke") ||
-        lowerMsg.includes("joke please")) &&
-        !lowerMsg.includes("don't")
-      ) {
-        shouldRoast = true;
-      }
-      // Detect compliment requests
-      else if (
-        (lowerMsg.includes("compliment me") ||
-        lowerMsg.includes("say something nice") ||
-        lowerMsg.includes("be nice") ||
-        lowerMsg.includes("praise me") ||
-        lowerMsg.includes("say nice things") ||
-        lowerMsg.includes("tell me i'm good")) &&
-        !lowerMsg.includes("don't")
-      ) {
-        shouldRoast = true;
-      }
-      // Detect help/advice requests (with a twist)
-      else if (
-        (lowerMsg.includes("help me") ||
-        lowerMsg.includes("give me advice") ||
-        lowerMsg.includes("any tips") ||
-        lowerMsg.includes("teach me")) &&
-        (lowerMsg.includes("neko") || lowerMsg.includes("bot"))
-      ) {
-        shouldRoast = true;
-      }
-
-      // Send roast if triggered
-      if (shouldRoast && config.chat && config.chat.respond) {
-        const randomRoast = roasts[Math.floor(Math.random() * roasts.length)];
-        
-        // Delay for natural conversation flow
-        setTimeout(() => {
-          bot.chat(randomRoast);
-        }, 700 + Math.random() * 1000);
-
-        addLog(`[Roast] Roasted ${username} for requesting something 😂`);
-      }
-    } catch (e) {
-      addLog("[Roast Module] Error:", e.message);
-    }
-  });
+  
 }
 
 // Death Message Module
