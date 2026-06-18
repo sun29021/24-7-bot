@@ -1429,7 +1429,7 @@ function getNearbyMobs(radiusBlocks = 20) {
 // NEKO MOB ENCOUNTER HANDLER
 // ============================================================
 let lastMobWarning = 0;
-addInterval(() => {
+addInterval(async () => {
   if (!bot || !botState.connected) return;
   
   const mobs = getNearbyMobs(20);
