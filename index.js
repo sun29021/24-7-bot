@@ -10,6 +10,9 @@ const http = require("http");
 const https = require("https");
 const nekoChatHandler = require('./nekoChatHandler');
 const memory = require('./memory');
+const learningSystem = require('./learningSystem');
+const experienceRecorder = require('./experienceRecorder');
+const strategyAdaptor = require('./strategyAdaptor');
 const nekoBehavior = require('./nekoBehavior');
 
 // ============================================================
@@ -1595,6 +1598,22 @@ async function executeSurvival() {
     return { success: false, error: error.message };
   }
 }
+      // Learning system updates every 30 seconds
+let lastStrategyAdapt = 0;
+addInterval(async () => {
+  if (!bot || !botState.connected) return;
+  const now = Date.now();
+  if (now - lastStrategyAdapt > 30000) {
+    lastStrategyAdapt = now;
+    try {
+      await strategyAdaptor.adaptBehavior();
+      const report = strategyAdaptor.getAdaptationReport();
+      addLog(`[NEKO Learning] Level: ${report.adaptationLevel}/10`);
+    } catch (e) {
+      console.log('[Learning] Error:', e.message);
+    }
+  }
+}, 30000);
 
 // Export for use
 module.exports = {
@@ -1842,6 +1861,13 @@ async function mineOre(oreType = 'diamond_ore') {
     memory.collectItem(oreType, 1);
     memory.learnPreference('Blocks', oreType, true);
     memory.saveMemory();
+    // Record for learning system
+    await experienceRecorder.recordMiningEvent(
+      oreType,
+      bot.entity.position,
+      Math.floor(bot.entity.position.y),
+      true
+    );
 
     addLog(`[NEKO Mining] Completed: ${oreType} mined and collected`);
 
@@ -1999,6 +2025,12 @@ addInterval(() => {
       
       // Keep chat logging
       addLog(`${username}: ${message}`);
+    // Record chat for learning
+    await experienceRecorder.recordChatEvent(
+      username,
+      message,
+      'neutral'
+    );
     });
 
     // ============================================================
@@ -2006,6 +2038,13 @@ addInterval(() => {
 // ============================================================
 bot.on('death', async (reason) => {
   try {
+    // Record death for learning
+    if (bot.entity?.position) {
+      await experienceRecorder.recordDeath(
+        reason || 'unknown',
+        bot.entity.position
+      );
+    }
     const event = {
       type: 'death',
       data: {
