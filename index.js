@@ -1449,26 +1449,15 @@ function getNearbyHostileMobs(radiusBlocks = 15) {
 async function fleeMobs() {
   try {
     if (!bot || !bot.entity) return;
-
     addLog(`[NEKO] FLEEING FROM MOBS!`);
-
-    // Move in random direction away
     const yaw = Math.random() * Math.PI * 2;
     bot.look(yaw, 0, true);
     bot.setControlState('forward', true);
-
-    // Run for 3 seconds
     setTimeout(() => {
       if (bot) bot.setControlState('forward', false);
     }, 3000);
-
-    // Chat reaction
-    setTimeout(() => {
-      if (bot) bot.chat('NOPE NOPE NOPE! 🏃');
-    }, 500);
-
+    // ← DELETE THIS LINE
     return { success: true, action: 'fled' };
-
   } catch (error) {
     addLog(`[NEKO] Flee error: ${error.message}`);
     return { success: false, error: error.message };
