@@ -79,7 +79,7 @@ class NekoMemory {
   updateConfidence() {
     const hoursSurvived = (Date.now() - this.data.lastSurvivalCheck) / (1000 * 60 * 60);
     if (hoursSurvived >= 0.0083) {  // 30 seconds instead of 1 hour
-      this.data.confidenceLevel = Math.min(100, this.data.confidenceLevel + hoursSurvived * 0.5);
+      this.data.confidenceLevel = Math.min(100, this.data.confidenceLevel + 5);  // +5 per 30 seconds
       this.data.lastSurvivalCheck = Date.now();
       this.saveMemory();
     }
