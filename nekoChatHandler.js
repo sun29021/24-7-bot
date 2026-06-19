@@ -1,3 +1,5 @@
+const strategyAdaptor = require('./strategyAdaptor');
+const experienceRecorder = require('./experienceRecorder');
 const nekoAI = require('./nekoAI');
 const memory = require('./memory');
 const nekoBehavior = require('./nekoBehavior');
@@ -170,6 +172,21 @@ class NekoChatHandler {
     const [cmd, ...args] = message.slice(1).toLowerCase().split(' ');
 
     const commands = {
+      learn: () => {
+    const r = strategyAdaptor.getAdaptationReport();
+    return `📚 Learning: ${r.adaptationLevel}/10 | Mobs: ${r.knownDangerousMobs} | Zones: ${r.knownSafeZones}`;
+  },
+
+  knowledge: () => {
+    const s = experienceRecorder.getStats();
+    return `🧠 Experiences: ${s.totalEvents} | Mining: ${s.miningEvents} | Combat: ${s.combatEvents}`;
+  },
+
+  strategy: () => {
+    const m = strategyAdaptor.getMiningStrategy();
+    const c = strategyAdaptor.getCombatStrategy();
+    return `⚡ Mine Y:${m.targetYLevel} | Fight: ${c.preferredTactic} | Aggression: ${c.aggressiveness}/10`;
+  },
       status: () => this.getStatus(),
       base: () => this.getBaseInfo(),
       inventory: () => this.getInventoryInfo(),
