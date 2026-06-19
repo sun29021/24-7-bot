@@ -7,42 +7,44 @@ class NekoBehavior {
     this.baseLocation = null;
   }
 
-  // Decide what to do based on game state
+  // Decide what to do based on game state - THIS IS THE CORE DECISION MAKER
   decideBehavior(bot, environment) {
+    if (!bot) return { action: 'IDLE', reason: 'no_bot' };
+    
     const healthPercent = (bot.health / 20) * 100;
     const confidence = memory.getConfidenceLevel();
+    const mobs = environment?.nearbyMobs || [];
+    const players = environment?.nearbyPlayers || [];
 
-    // PRIORITY 1: Survival
-    if (bot.health < 5) {
-      return { action: 'PANIC_FLEE', reason: 'critical_health' };
-    }
-
-    if (environment.nearbyMobs && environment.nearbyMobs.length > 0) {
+    // PRIORITY 1: Survival from mobs
+    if (mobs && mobs.length > 0) {
       if (confidence === 'SCARED' || confidence === 'CAREFUL') {
-        return { action: 'FLEE', reason: 'mobs_detected' };
-      } else {
-        return { action: 'COMBAT', reason: 'confident_in_combat' };
+        return { action: 'FLEE', reason: `${mobs.length}_mobs_nearby` };
+      } else if (confidence === 'VERY_CONFIDENT') {
+        return { action: 'COMBAT', reason: 'confident_vs_mobs' };
       }
     }
 
-    // PRIORITY 2: Essentials
+    // PRIORITY 2: Critical health
+    if (bot.health < 5) {
+      return { action: 'FIND_FOOD', reason: 'critical_health' };
+    }
+
     if (healthPercent < 50) {
       return { action: 'FIND_FOOD', reason: 'low_health' };
     }
 
-    // PRIORITY 3: Base building (after first day)
-    if (memory.data.daysAlive > 1) {
-      if (Math.random() > 0.7) {
-        return { action: 'BUILD_BASE', reason: 'time_to_upgrade' };
-      }
+    // PRIORITY 3: Base building (after surviving initial danger)
+    if (memory.data.daysAlive > 1 && Math.random() > 0.75) {
+      return { action: 'BUILD_BASE', reason: 'base_upgrade_cycle' };
     }
 
-    // PRIORITY 4: Collecting & Mining
-    if (Math.random() > 0.5) {
-      return { action: 'MINE', reason: 'resource_gathering' };
+    // PRIORITY 4: Mining (most common activity)
+    if (Math.random() > 0.4) {
+      return { action: 'MINE', reason: 'grinding_resources' };
     }
 
-    // PRIORITY 5: Explore
+    // PRIORITY 5: Exploration
     return { action: 'EXPLORE', reason: 'curiosity' };
   }
 
@@ -58,7 +60,7 @@ class NekoBehavior {
 
     // Preference learning - mine what worked well before
     let targetBlock = blocks[0].name;
-    if (memory.data.preferences.favoriteBlocks.length > 0) {
+    if (memory.data.preferences.favoriteBlocks && memory.data.preferences.favoriteBlocks.length > 0) {
       targetBlock = memory.data.preferences.favoriteBlocks[0];
     } else {
       targetBlock = blocks[Math.floor(Math.random() * blocks.length)].name;
@@ -73,18 +75,22 @@ class NekoBehavior {
 
   // Collect items
   async collectItems(bot) {
-    const items = bot.inventory.items();
+    if (!bot || !bot.inventory) return { type: 'collection', itemsCollected: 0, total: 0 };
+    
+    const items = bot.inventory.items() || [];
     let collected = 0;
 
     for (const item of items) {
-      memory.collectItem(item.name, item.count);
-      collected += item.count;
+      if (item && item.name) {
+        memory.collectItem(item.name, item.count || 1);
+        collected += item.count || 1;
+      }
     }
 
     return {
       type: 'collection',
       itemsCollected: collected,
-      total: memory.data.base.resourcesCollected
+      total: memory.data.base.resourcesCollected || 0
     };
   }
 
@@ -98,8 +104,9 @@ class NekoBehavior {
       { name: 'nether_sanctuary', requires: ['netherite', 'obsidian'], description: 'ULTIMATE BASE' }
     ];
 
+    const currentUpgrades = memory.data.base?.upgrades || ['dirt_hut'];
     const currentUpgradeIndex = upgradePath.findIndex(
-      u => memory.data.base.upgrades.includes(u.name)
+      u => currentUpgrades.includes(u.name)
     );
     
     const nextUpgrade = upgradePath[currentUpgradeIndex + 1];
@@ -109,8 +116,10 @@ class NekoBehavior {
     }
 
     // Check if we have enough resources
+    const inv = memory.data.inventory || { diamonds: 0, gold: 0, iron: 0, wood: 0, stone: 0, other: {} };
     const hasResources = nextUpgrade.requires.every(resource => {
-      return memory.data.inventory[resource] > (10 + currentUpgradeIndex * 5);
+      const amount = inv[resource] || 0;
+      return amount > (10 + currentUpgradeIndex * 5);
     });
 
     if (hasResources) {
@@ -143,7 +152,7 @@ class NekoBehavior {
 
   // Fight mobs
   async combatMobs(bot) {
-    const confidence = memory.data.confidenceLevel;
+    const confidence = memory.data.confidenceLevel || 10;
     
     return {
       type: 'combat',
@@ -155,9 +164,12 @@ class NekoBehavior {
 
   // Exploration behavior
   async explore(bot) {
+    if (!bot || !bot.entity) return { type: 'exploration', reason: 'no_position' };
+    
+    const pos = bot.entity.position;
     const newLocation = {
-      x: bot.entity.position.x + (Math.random() - 0.5) * 200,
-      z: bot.entity.position.z + (Math.random() - 0.5) * 200
+      x: pos.x + (Math.random() - 0.5) * 200,
+      z: pos.z + (Math.random() - 0.5) * 200
     };
 
     return {
@@ -185,6 +197,9 @@ class NekoBehavior {
         break;
 
       case 'safe_location':
+        if (!memory.data.preferences.safePlaces) {
+          memory.data.preferences.safePlaces = [];
+        }
         memory.data.preferences.safePlaces.push({
           location: details.location,
           timestamp: Date.now()
@@ -220,7 +235,7 @@ class NekoBehavior {
         "Okay okay okay I'm actually kinda scared rn 😰"
       ],
       survived_long: [
-        `I've been alive for ${memory.data.daysAlive} days! I'm basically a Minecraft pro now 😎`,
+        `I've been alive for ${memory.data.daysAlive || 0} days! I'm basically a Minecraft pro now 😎`,
         "Getting better every day fr fr. This bot is unstoppable!",
         "Nah I got this. Confidence 📈 Fear 📉"
       ],
