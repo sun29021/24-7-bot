@@ -1958,7 +1958,176 @@ addInterval(async () => {
   }
 }, 2000);
 
+// ============================================================
+// MAIN BEHAVIOR DECISION LOOP
+// ============================================================
+// ADD THIS RIGHT AFTER THE SURVIVAL SYSTEM (around line 1960)
+// This is the CORE FIX - makes the bot actually DO things
 
+let lastBehaviorDecision = 0;
+addInterval(async () => {
+  if (!bot || !botState.connected) return;
+  
+  const now = Date.now();
+  if (now - lastBehaviorDecision < 4000) return; // Decide every 4 seconds
+  
+  lastBehaviorDecision = now;
+  
+  try {
+    // Build environment context
+    const environment = {
+      nearbyMobs: [],
+      nearbyPlayers: [],
+      nearestOres: [],
+      playerHealth: bot.health || 10,
+      position: bot.entity?.position
+    };
+    
+    // Scan for nearby entities
+    if (bot.entities) {
+      Object.values(bot.entities).forEach(entity => {
+        if (!entity || entity.username === bot.username) return;
+        
+        const dist = bot.entity.position.distanceTo(entity.position);
+        
+        if (entity.type === 'mob' && dist < 25) {
+          environment.nearbyMobs.push({
+            name: entity.name,
+            displayName: entity.displayName,
+            health: entity.health,
+            distance: dist
+          });
+        } else if (entity.type === 'player' && dist < 30) {
+          environment.nearbyPlayers.push({
+            username: entity.username,
+            distance: dist
+          });
+        }
+      });
+    }
+    
+    // Get bot's behavior decision
+    const decision = nekoBehavior.decideBehavior(bot, environment);
+    
+    // Execute the decided action
+    if (decision && decision.action) {
+      nekoBehavior.currentActivity = decision.action.toLowerCase().replace('_', '');
+      
+      let result;
+      
+      switch (decision.action) {
+        case 'MINE':
+          result = await executeMining();
+          if (result.success) {
+            addLog(`[NEKO Behavior] Mining: ${result.message || 'searching for ore'}`);
+          }
+          break;
+          
+        case 'EXPLORE':
+          // Move to random location
+          const target = {
+            x: bot.entity.position.x + (Math.random() - 0.5) * 100,
+            z: bot.entity.position.z + (Math.random() - 0.5) * 100
+          };
+          try {
+            bot.pathfinder.setMovements(bot.movement);
+            bot.pathfinder.setGoal(new (require('mineflayer-pathfinder')).goals.GoalBlock(target.x, bot.entity.position.y, target.z));
+            addLog(`[NEKO Behavior] Exploring towards X: ${Math.round(target.x)}, Z: ${Math.round(target.z)}`);
+          } catch (e) {
+            addLog(`[NEKO Behavior] Exploration error: ${e.message}`);
+          }
+          break;
+          
+        case 'FLEE':
+          // Move away from mobs
+          const fleeTarget = {
+            x: bot.entity.position.x - Math.sign(environment.nearbyMobs[0]?.distance || 0) * 50,
+            z: bot.entity.position.z - Math.sign(environment.nearbyMobs[0]?.distance || 0) * 50
+          };
+          try {
+            bot.pathfinder.setMovements(bot.movement);
+            bot.pathfinder.setGoal(new (require('mineflayer-pathfinder')).goals.GoalBlock(fleeTarget.x, bot.entity.position.y, fleeTarget.z));
+            addLog(`[NEKO] FLEEING FROM MOBS!`);
+          } catch (e) {}
+          break;
+          
+        case 'BUILD_BASE':
+          result = await nekoBehavior.buildBase(bot);
+          addLog(`[NEKO Behavior] Building: ${result.upgraded ? 'Upgraded!' : result.message}`);
+          break;
+          
+        case 'FIND_FOOD':
+          try {
+            await eatFood();
+            addLog(`[NEKO Behavior] Eating to restore health`);
+          } catch (e) {
+            addLog(`[NEKO Behavior] No food available`);
+          }
+          break;
+          
+        case 'COMBAT':
+          addLog(`[NEKO] Combat decision: confidence=${Math.round(memory.data.confidenceLevel)}, health=${bot.health}, mobs=${environment.nearbyMobs.length}`);
+          if (memory.data.confidenceLevel < 30) {
+            addLog(`[NEKO] Not confident enough, fleeing!`);
+          } else {
+            addLog(`[NEKO] Engaging in combat!`);
+          }
+          break;
+          
+        default:
+          addLog(`[NEKO Behavior] Unknown action: ${decision.action}`);
+      }
+    }
+    
+  } catch (error) {
+    addLog(`[NEKO Behavior] Loop error: ${error.message}`);
+  }
+}, 4000);
+
+// ============================================================
+// MINING EXECUTION (if executeMining doesn't exist)
+// ============================================================
+async function executeMining() {
+  try {
+    // Find nearest valuable ore
+    const ores = ['diamond_ore', 'gold_ore', 'iron_ore', 'coal_ore'];
+    
+    let bestOre = null;
+    let closestDist = 999;
+    
+    if (bot.blockAt) {
+      for (let x = -20; x <= 20; x++) {
+        for (let z = -20; z <= 20; z++) {
+          for (let y = -64; y <= 70; y++) {
+            const block = bot.blockAt(
+              bot.entity.position.x + x,
+              bot.entity.position.y + y,
+              bot.entity.position.z + z
+            );
+            
+            if (block && ores.some(ore => block.name.includes(ore))) {
+              const dist = Math.hypot(x, z);
+              if (dist < closestDist) {
+                closestDist = dist;
+                bestOre = { name: block.name, x: bot.entity.position.x + x, y: bot.entity.position.y + y, z: bot.entity.position.z + z };
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    if (bestOre && closestDist < 20) {
+      addLog(`[NEKO Mining] Found ${bestOre.name} at distance ${Math.round(closestDist)}`);
+      return { success: true, message: `Found ${bestOre.name}` };
+    }
+    
+    return { success: false, message: 'No ore found' };
+    
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+}
       // ============================================================
 // DEBUG: Entity Detection Logger
 // ============================================================
