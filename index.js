@@ -1446,7 +1446,7 @@ addInterval(async () => {
       
       // Only analyze if dangerous or if bot is confident enough
       const confidence = memory.data.confidenceLevel;
-      if (hasDangerousMob || confidence > 50) {
+      if (hasDangerousMob || confidence > 0) {
         const event = {
           type: 'mob_encounter',
           data: {
