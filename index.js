@@ -1287,6 +1287,333 @@ function createBot() {
       defaultMove.canDig = false;
       defaultMove.liquidCost = 1000;
       defaultMove.fallDamageCost = 1000;
+
+      /**
+ * PHASE 3.1 STEP 2B - COMBAT & EATING SYSTEM
+ * 
+ * Makes bot:
+ * - Eat food when hungry
+ * - Fight mobs when confident
+ * - Flee from mobs when scared
+ * - Heal itself
+ * 
+ * Add these to index.js (after mining helpers, before initializeModules)
+ */
+
+// ============================================================
+// EATING / HUNGER SYSTEM
+// ============================================================
+
+/**
+ * Find food in inventory
+ * Returns: food item or null
+ */
+function findFood() {
+  if (!bot || !bot.inventory) return null;
+
+  const foodItems = [
+    'cooked_beef', 'cooked_pork', 'cooked_chicken', 'cooked_mutton',
+    'cooked_salmon', 'cooked_cod',
+    'bread', 'baked_potato', 'cookie',
+    'apple', 'melon', 'carrot',
+    'beef', 'pork', 'chicken', 'mutton', 'salmon', 'cod'
+  ];
+
+  const inventory = bot.inventory.items();
+  for (const item of inventory) {
+    if (foodItems.some(food => item.name.includes(food))) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Eat food to restore health
+ * Returns: promise that resolves when eaten
+ */
+async function eatFood() {
+  return new Promise((resolve, reject) => {
+    try {
+      const food = findFood();
+      
+      if (!food) {
+        reject(new Error('No food in inventory'));
+        return;
+      }
+
+      // Equip food
+      bot.equip(food, 'hand').then(() => {
+        // Eat it
+        bot.consume().then(() => {
+          addLog(`[NEKO] Ate ${food.name} (health restored)`);
+          resolve();
+        }).catch((err) => {
+          reject(err);
+        });
+      }).catch((err) => {
+        reject(err);
+      });
+
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/**
+ * Check if bot needs to eat
+ * Returns: true if health < 18 or food < 10
+ */
+function shouldEat() {
+  if (!bot) return false;
+  
+  const food = findFood();
+  if (!food) return false; // No food available
+  
+  // Eat if health is low (below 10 hearts = 20 health points)
+  if (bot.health < 10) return true;
+  
+  // Or if we haven't eaten in a while (hunger bar empty)
+  if (bot.food < 10) return true;
+  
+  return false;
+}
+
+/**
+ * Eat automatically when needed
+ */
+async function executeEating() {
+  try {
+    if (!shouldEat()) return { success: false, reason: 'not_hungry' };
+
+    addLog(`[NEKO] Health low (${bot.health}/20), finding food...`);
+    await eatFood();
+
+    // React in chat
+    if (bot) {
+      setTimeout(() => {
+        bot.chat('Grabbing food, I need energy! 🍖');
+      }, 300);
+    }
+
+    return { success: true, message: 'Ate food' };
+
+  } catch (error) {
+    addLog(`[NEKO] Eating error: ${error.message}`);
+    return { success: false, reason: error.message };
+  }
+}
+
+// ============================================================
+// COMBAT SYSTEM
+// ============================================================
+
+/**
+ * Get nearby mobs (for combat)
+ */
+function getNearbyHostileMobs(radiusBlocks = 15) {
+  if (!bot || !bot.entities) return [];
+
+  const playerPos = bot.entity.position;
+  const hostileMobs = ['creeper', 'zombie', 'skeleton', 'spider', 'enderman', 'cave_spider', 'phantom', 'drowned', 'warden'];
+  const mobs = [];
+
+  for (const id in bot.entities) {
+    const entity = bot.entities[id];
+    if (!entity) continue;
+
+    // Check if it's a hostile mob
+    const isHostile = hostileMobs.some(mob => entity.name?.toLowerCase().includes(mob));
+    if (!isHostile) continue;
+
+    // Check distance
+    const dist = playerPos.distanceTo(entity.position);
+    if (dist < radiusBlocks) {
+      mobs.push({
+        name: entity.name || 'unknown',
+        entity: entity,
+        distance: Math.round(dist),
+        health: entity.health || 20
+      });
+    }
+  }
+
+  return mobs;
+}
+
+/**
+ * Flee from mobs - move away
+ */
+async function fleeMobs() {
+  try {
+    if (!bot || !bot.entity) return;
+
+    addLog(`[NEKO] FLEEING FROM MOBS!`);
+
+    // Move in random direction away
+    const yaw = Math.random() * Math.PI * 2;
+    bot.look(yaw, 0, true);
+    bot.setControlState('forward', true);
+
+    // Run for 3 seconds
+    setTimeout(() => {
+      if (bot) bot.setControlState('forward', false);
+    }, 3000);
+
+    // Chat reaction
+    setTimeout(() => {
+      if (bot) bot.chat('NOPE NOPE NOPE! 🏃');
+    }, 500);
+
+    return { success: true, action: 'fled' };
+
+  } catch (error) {
+    addLog(`[NEKO] Flee error: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Fight a mob - attack it
+ */
+async function fightMob(targetMob) {
+  try {
+    if (!bot) return { success: false };
+
+    const { entity } = targetMob;
+    if (!entity) return { success: false };
+
+    addLog(`[NEKO] FIGHTING ${targetMob.name}!`);
+
+    // Equip sword if available
+    const sword = bot.inventory.items().find(item => 
+      item.name.includes('sword') || item.name.includes('axe')
+    );
+
+    if (sword) {
+      await bot.equip(sword, 'hand');
+    }
+
+    // Attack the mob
+    let attackCount = 0;
+    const attackLoop = setInterval(() => {
+      if (!bot || !entity || attackCount > 10) {
+        clearInterval(attackLoop);
+        return;
+      }
+
+      try {
+        bot.attack(entity);
+        attackCount++;
+      } catch (e) {}
+    }, 500);
+
+    // Fight for max 5 seconds
+    setTimeout(() => clearInterval(attackLoop), 5000);
+
+    // Chat reaction
+    setTimeout(() => {
+      if (bot) bot.chat(`Take that, ${targetMob.name}! 💪`);
+    }, 500);
+
+    return { success: true, action: 'fought' };
+
+  } catch (error) {
+    addLog(`[NEKO] Fight error: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Decide: fight or flee from mobs
+ */
+async function executeCombat() {
+  try {
+    if (!bot || !botState.connected) return { success: false };
+
+    const mobs = getNearbyHostileMobs(15);
+    if (mobs.length === 0) {
+      return { success: false, reason: 'no_mobs' };
+    }
+
+    const confidence = memory.data.confidenceLevel || 1;
+    const health = bot.health || 20;
+
+    addLog(`[NEKO] Combat decision: confidence=${confidence}, health=${health}, mobs=${mobs.length}`);
+
+    // RULES:
+    // 1. Health < 5: ALWAYS FLEE
+    if (health < 5) {
+      addLog(`[NEKO] Health critical! Fleeing!`);
+      return await fleeMobs();
+    }
+
+    // 2. Confidence > 50: FIGHT
+    if (confidence > 50) {
+      addLog(`[NEKO] Confident! Fighting!`);
+      const closest = mobs[0]; // Fight closest mob
+      return await fightMob(closest);
+    }
+
+    // 3. Otherwise: FLEE
+    addLog(`[NEKO] Not confident enough, fleeing!`);
+    return await fleeMobs();
+
+  } catch (error) {
+    addLog(`[NEKO] Combat execution error: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// ============================================================
+// SURVIVAL LOOP (executes both eating and combat)
+// ============================================================
+
+/**
+ * Main survival executor
+ * Decides what to do: eat, fight, or flee
+ */
+async function executeSurvival() {
+  try {
+    if (!bot || !botState.connected) return;
+
+    // Priority 1: Eating (survival is more important than combat)
+    if (shouldEat()) {
+      const eatResult = await executeEating();
+      if (eatResult.success) {
+        return { action: 'eating', success: true };
+      }
+    }
+
+    // Priority 2: Combat (fight or flee)
+    const mobs = getNearbyHostileMobs(15);
+    if (mobs.length > 0) {
+      const combatResult = await executeCombat();
+      return { action: 'combat', ...combatResult };
+    }
+
+    return { action: 'none', success: false };
+
+  } catch (error) {
+    addLog(`[NEKO] Survival error: ${error.message}`);
+    return { success: false, error: error.message };
+  }
+}
+
+// Export for use
+module.exports = {
+  findFood,
+  eatFood,
+  shouldEat,
+  executeEating,
+  getNearbyHostileMobs,
+  fleeMobs,
+  fightMob,
+  executeCombat,
+  executeSurvival
+};
 /**
  * PHASE 3.1 - MINING SYSTEM HELPERS
  * 
@@ -1593,6 +1920,23 @@ module.exports = {
       
 
       initializeModules(bot, mcData, defaultMove);
+
+      // ============================================================
+// NEKO SURVIVAL SYSTEM (Eating + Combat Loop)
+// ============================================================
+let lastSurvivalCheck = 0;
+addInterval(async () => {
+  if (!bot || !botState.connected) return;
+  const now = Date.now();
+  if (now - lastSurvivalCheck > 2000) {
+    lastSurvivalCheck = now;
+    try {
+      await executeSurvival();
+    } catch (e) {
+      console.log('[NEKO] Survival loop error:', e.message);
+    }
+  }
+}, 2000);
 
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
