@@ -1583,6 +1583,11 @@ async function executeSurvival() {
       return { action: 'combat', ...combatResult };
     }
 
+    const mineResult = await executeMining();
+    if (mineResult && mineResult.success) {
+      return { action: 'mining', ...mineResult };
+    }
+
     return { action: 'none', success: false };
 
   } catch (error) {
@@ -1927,6 +1932,35 @@ addInterval(async () => {
   }
 }, 2000);
 
+
+      // ============================================================
+// DEBUG: Entity Detection Logger
+// ============================================================
+let lastDebugLog = 0;
+addInterval(() => {
+  if (!bot || !botState.connected) return;
+  const now = Date.now();
+  
+  // Log every 10 seconds
+  if (now - lastDebugLog > 10000) {
+    lastDebugLog = now;
+    
+    if (bot.entities) {
+      const allEntities = Object.values(bot.entities).filter(e => e);
+      const nearby = allEntities.filter(e => {
+        const dist = bot.entity.position.distanceTo(e.position);
+        return dist < 20;
+      });
+      
+      addLog(`[DEBUG] Total entities: ${allEntities.length}, Nearby (20m): ${nearby.length}`);
+      
+      // Log each nearby entity with ALL info
+      nearby.forEach(e => {
+        addLog(`[DEBUG] Entity: name="${e.name}" | type="${e.type}" | health=${e.health} | displayName="${e.displayName}"`);
+      });
+    }
+  }
+}, 1000);
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
         if (bot && botState.connected && config.server["try-creative"]) {
