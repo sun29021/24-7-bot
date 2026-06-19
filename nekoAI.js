@@ -140,7 +140,43 @@ REMEMBER: ONE SENTENCE ONLY. Stay in character always.`;
     }
   }
 
-  async callGroqAPI(systemPrompt, messages) {
+  // Classify a free-form chat message into a structured action intent using
+  // the LLM, for requests the regex-based parser in nekoChatHandler doesn't
+  // catch (different phrasing, typos, indirect requests, etc).
+  // Returns a parsed object like { action: 'craft', target: 'wooden_pickaxe' }
+  // or { action: 'none' } if it's just conversation, never throws.
+  async classifyIntent(playerMessage) {
+    if (!this.groqApiKey) return { action: 'none' };
+
+    const systemPrompt = `You classify a Minecraft player's chat message into ONE action intent for a bot named NEKO.
+Respond with ONLY raw JSON, no markdown, no explanation. Schema:
+{"action": "craft"|"mine"|"come"|"follow"|"stop"|"none", "target": "<item or ore name, lowercase, underscores, or null>"}
+
+Rules:
+- "craft"/"make"/"build me a X" (tools, items) -> action "craft", target is the item name (e.g. "wooden_pickaxe")
+- "mine"/"get"/"find"/"dig up" + a resource -> action "mine", target is the ore/resource name (e.g. "iron")
+- "come here"/"come to me"/similar -> action "come", target null
+- "follow me" -> action "follow", target null
+- "stop"/"cancel"/"wait"/"halt" -> action "stop", target null
+- Anything else (greetings, questions, banter, unrelated chat) -> action "none", target null
+- If you're not confident it's an action request, use "none" - do not guess.`;
+
+    try {
+      const raw = await this.callGroqAPI(systemPrompt, [
+        { role: 'user', content: playerMessage }
+      ], { maxTokens: 60, temperature: 0 });
+
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (!parsed || typeof parsed.action !== 'string') return { action: 'none' };
+      return parsed;
+    } catch (err) {
+      console.log('[NEKO] Intent classification failed:', err.message);
+      return { action: 'none' };
+    }
+  }
+
+  async callGroqAPI(systemPrompt, messages, opts = {}) {
     return new Promise((resolve, reject) => {
       const payload = {
         model: 'llama-3.3-70b-versatile',
@@ -148,8 +184,8 @@ REMEMBER: ONE SENTENCE ONLY. Stay in character always.`;
           { role: 'system', content: systemPrompt },
           ...messages
         ],
-        temperature: 0.85,
-        max_tokens: 100
+        temperature: opts.temperature ?? 0.85,
+        max_tokens: opts.maxTokens ?? 100
       };
 
       const options = {

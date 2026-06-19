@@ -1190,6 +1190,14 @@ function getReconnectDelay() {
   return delay + jitter;
 }
 
+// Chat-spam cooldown trackers - module-level (NOT inside createBot) so they
+// persist across reconnects. Previously these were declared with `let`
+// inside createBot() and reset to 0 every reconnect, causing an immediate
+// fresh "Time for a fight" / "Take that, X!" message right after each
+// rejoin regardless of how recently one had already fired.
+let lastCombatChat = 0;
+let lastMobWarning = 0;
+
 function createBot() {
   if (isReconnecting) {
     addLog("[Bot] Already reconnecting, skipping...");
@@ -1366,6 +1374,75 @@ async function eatFood() {
 }
 
 /**
+ * Find a nearby huntable animal (passive mob that drops food when killed)
+ * Returns: entity or null
+ */
+function findNearbyAnimal(radiusBlocks = 24) {
+  if (!bot || !bot.entities || !bot.entity) return null;
+
+  const huntable = ['cow', 'pig', 'chicken', 'sheep', 'rabbit'];
+  const selfPos = bot.entity.position;
+  let nearest = null;
+  let nearestDist = radiusBlocks;
+
+  for (const id in bot.entities) {
+    const e = bot.entities[id];
+    if (!e || !e.name || !huntable.includes(e.name)) continue;
+    const dist = selfPos.distanceTo(e.position);
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearest = e;
+    }
+  }
+
+  return nearest;
+}
+
+/**
+ * Hunt the nearest passive animal for food. Walks to it, kills it, and lets
+ * the dropped item get auto-picked-up by walking over the drop spot.
+ * Returns: { success, message }
+ */
+async function huntForFood() {
+  const animal = findNearbyAnimal(24);
+  if (!animal) {
+    return { success: false, message: 'No huntable animals nearby' };
+  }
+
+  try {
+    addLog(`[NEKO] Hunting ${animal.name} for food...`);
+
+    if (bot.pathfinder) {
+      const { goals } = require('mineflayer-pathfinder');
+      await bot.pathfinder.goto(new goals.GoalNear(animal.position.x, animal.position.y, animal.position.z, 2)).catch(() => {});
+    }
+
+    // Equip a weapon if we have one (fists work too, just slower)
+    const weapon = bot.inventory.items().find(item => item.name.includes('sword') || item.name.includes('axe'));
+    if (weapon) await bot.equip(weapon, 'hand').catch(() => {});
+
+    // Attack until it dies or we give up after ~6s
+    const deadline = Date.now() + 6000;
+    while (animal.isValid !== false && bot.entities[animal.id] && Date.now() < deadline) {
+      try { bot.attack(animal); } catch (e) {}
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    // Walk to where it died to scoop up the drop (items auto-collect on touch)
+    if (bot.pathfinder) {
+      const { goals } = require('mineflayer-pathfinder');
+      await bot.pathfinder.goto(new goals.GoalNear(animal.position.x, animal.position.y, animal.position.z, 1)).catch(() => {});
+    }
+
+    addLog(`[NEKO] Finished hunting ${animal.name}`);
+    return { success: true, message: `Hunted ${animal.name}` };
+
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+}
+
+/**
  * Check if bot needs to eat
  * Returns: true if health < 18 or food < 10
  */
@@ -1389,6 +1466,16 @@ function shouldEat() {
  */
 async function executeEating() {
   try {
+    // No food on hand but actually hungry - go get some instead of giving up.
+    if (!findFood() && bot && bot.food < 16) {
+      const huntResult = await huntForFood();
+      if (huntResult.success) {
+        addLog(`[NEKO] ${huntResult.message} - will eat once food is collected`);
+      }
+      // Whether or not the hunt succeeded, fall through - if we now have
+      // food, shouldEat() below will pick it up; otherwise we just keep going.
+    }
+
     if (!shouldEat()) return { success: false, reason: 'not_hungry' };
 
     addLog(`[NEKO] Health low (${bot.health}/20), finding food...`);
@@ -1470,9 +1557,6 @@ async function fleeMobs() {
 /**
  * Fight a mob - attack it
  */
-// Track last combat chat to prevent spam
-let lastCombatChat = 0;
-
 async function fightMob(targetMob) {
   try {
     if (!bot) return { success: false };
@@ -1629,6 +1713,8 @@ module.exports = {
   eatFood,
   shouldEat,
   executeEating,
+  findNearbyAnimal,
+  huntForFood,
   getNearbyHostileMobs,
   fleeMobs,
   fightMob,
@@ -2330,7 +2416,6 @@ function getNearbyMobs(radiusBlocks = 20) {
     // ============================================================
 // NEKO MOB ENCOUNTER HANDLER
 // ============================================================
-let lastMobWarning = 0;
 addInterval(async () => {
   if (!bot || !botState.connected) return;
   
