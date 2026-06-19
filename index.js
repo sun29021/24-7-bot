@@ -31,7 +31,25 @@ let botState = {
   errors: [],
   wasThrottled: false,
 };
-
+// Response throttling to prevent chat spam
+const responseThrottle = {
+  lastResponseTime: 0,
+  lastResponseText: '',
+  minInterval: 5000
+};
+ 
+function shouldSendResponse(message) {
+  const now = Date.now();
+  if (message === responseThrottle.lastResponseText) {
+    return false;
+  }
+  if (now - responseThrottle.lastResponseTime < responseThrottle.minInterval) {
+    return false;
+  }
+  responseThrottle.lastResponseTime = now;
+  responseThrottle.lastResponseText = message;
+  return true;
+}
 // Health check endpoint for monitoring
 app.get('/', (req, res) => {
   res.send(`
@@ -1957,7 +1975,38 @@ addInterval(async () => {
     }
   }
 }, 2000);
-
+async function buildBase() {
+  try {
+    const botPos = bot.entity.position;
+    const positions = [
+      { x: botPos.x + 1, y: botPos.y, z: botPos.z },
+      { x: botPos.x - 1, y: botPos.y, z: botPos.z },
+      { x: botPos.x, y: botPos.y, z: botPos.z + 1 },
+      { x: botPos.x, y: botPos.y, z: botPos.z - 1 }
+    ];
+    
+    let placed = 0;
+    for (const pos of positions) {
+      try {
+        const block = bot.blockAt(pos.x, pos.y, pos.z);
+        if (block && block.name === 'air') {
+          const material = bot.inventory.items().find(item => 
+            item.name.includes('dirt') || item.name.includes('stone')
+          );
+          if (material) {
+            await bot.equip(material, 'hand');
+            await bot.placeBlock(block);
+            placed++;
+            await new Promise(r => setTimeout(r, 200));
+          }
+        }
+      } catch (e) {}
+    }
+    return { upgraded: placed > 0, message: `Placed ${placed} blocks` };
+  } catch (error) {
+    return { upgraded: false, message: 'Build failed' };
+  }
+}
 // ============================================================
 // MAIN BEHAVIOR DECISION LOOP
 // ============================================================
@@ -2052,9 +2101,9 @@ addInterval(async () => {
           break;
           
         case 'BUILD_BASE':
-          result = await nekoBehavior.buildBase(bot);
-          addLog(`[NEKO Behavior] Building: ${result.upgraded ? 'Upgraded!' : result.message}`);
-          break;
+  result = await buildBase();
+  addLog(`[NEKO Behavior] Building: ${result.message}`);
+  break;
           
         case 'FIND_FOOD':
           try {
@@ -2225,12 +2274,14 @@ bot.on('death', async (reason) => {
     };
     
     const analysis = await nekoChatHandler.analyzeGameEvent(event);
-    
+ 
     if (analysis && analysis.shouldChat && analysis.message) {
-      setTimeout(() => {
-        bot.chat(analysis.message);
-        addLog(`[NEKO Event] Death reaction: ${analysis.message}`);
-      }, 500);
+      if (shouldSendResponse(analysis.message)) {
+        setTimeout(() => {
+          bot.chat(analysis.message);
+          addLog(`[NEKO Event] Death reaction: ${analysis.message}`);
+        }, 500);
+      }
     }
   } catch (e) {
     console.log('[NEKO] Death event error:', e.message);
@@ -2263,8 +2314,10 @@ bot.on('health', async () => {
     const analysis = await nekoChatHandler.analyzeGameEvent(event);
     
     if (analysis && analysis.shouldChat && analysis.message) {
-      bot.chat(analysis.message);
-      addLog(`[NEKO Event] Damage reaction (health ${bot.health}/20): ${analysis.message}`);
+      if (shouldSendResponse(analysis.message)) {
+        bot.chat(analysis.message);
+        addLog(`[NEKO Event] Damage reaction (health ${bot.health}/20): ${analysis.message}`);
+      }
     }
   } catch (e) {
     console.log('[NEKO] Damage event error:', e.message);
@@ -2339,8 +2392,10 @@ addInterval(async () => {
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
         if (analysis && analysis.shouldChat && analysis.message) {
-          bot.chat(analysis.message);
-          addLog(`[NEKO Event] Mob encounter (${mobs.length} mobs): ${analysis.message}`);
+          if (shouldSendResponse(analysis.message)) {
+            bot.chat(analysis.message);
+            addLog(`[NEKO Event] Mob encounter (${mobs.length} mobs): ${analysis.message}`);
+          }
         }
       }
     } catch (e) {
@@ -2382,10 +2437,12 @@ bot.on('diggingCompleted', (block) => {
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
         if (analysis && analysis.shouldChat && analysis.message) {
+          if (shouldSendResponse(analysis.message)) {
           setTimeout(() => {
             bot.chat(analysis.message);
             addLog(`[NEKO Event] Mined ${oreType}: ${analysis.message}`);
           }, 300);
+        }
         }
       })();
     }
@@ -2428,8 +2485,10 @@ addInterval(() => {
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
         if (analysis && analysis.shouldChat && analysis.message) {
+          if (shouldSendResponse(analysis.message)) {
           bot.chat(analysis.message);
           addLog(`[NEKO Event] Discovery: ${analysis.message}`);
+        }
         }
       })();
     }
