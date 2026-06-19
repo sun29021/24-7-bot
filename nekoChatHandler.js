@@ -26,6 +26,15 @@ class NekoChatHandler {
         return await this.handleCommand(playerName, message, bot);
       }
 
+      // Check if message is an actionable request (craft/mine/come/follow/stop)
+      // before falling through to plain conversational AI - this is what
+      // actually makes NEKO DO things players ask for, not just talk about them.
+      const actionResult = await this.handleActionIntent(playerName, message, bot);
+      if (actionResult !== null) {
+        memory.recordPlayerInteraction(playerName, message, actionResult);
+        return actionResult;
+      }
+
       // Detect if player is telling NEKO their name
       const nameMatch = message.match(/my name is (\w+)|call me (\w+)|ami (\w+)|amare (\w+) dako|amake (\w+) bolo/i);
       if (nameMatch) {
@@ -180,6 +189,170 @@ class NekoChatHandler {
   }
 
   /**
+   * ============================================================
+   * ACTION INTENT PARSER
+   * Detects plain-English requests like "make a wooden pickaxe",
+   * "mine some iron", "come here", "follow me", "stop" and executes
+   * them on the live bot instead of just chatting about it.
+   * Returns a reply string if it handled an action, or null if the
+   * message wasn't recognized as an action (so the normal AI chat
+   * path can take over).
+   * ============================================================
+   */
+  async handleActionIntent(playerName, message, bot) {
+    const lower = message.toLowerCase().trim();
+
+    try {
+      // --- STOP / CANCEL ---
+      if (/^(stop|cancel|halt|wait)\b/.test(lower)) {
+        if (bot.pathfinder) bot.pathfinder.setGoal(null);
+        this.followTarget = null;
+        return `Okay, stopping ⏸️`;
+      }
+
+      // --- COME HERE ---
+      if (/\b(come here|come to me|cmere|get over here)\b/.test(lower)) {
+        return await this.actionComeHere(playerName, bot);
+      }
+
+      // --- FOLLOW ME ---
+      if (/\b(follow me|follow him|follow her)\b/.test(lower)) {
+        return await this.actionFollow(playerName, bot);
+      }
+
+      // --- CRAFT / MAKE ---
+      let m = lower.match(/\b(?:craft|make)\s+(?:me\s+)?(?:a|an|some)?\s*([a-z_\s]+?)(?:\s+please)?[.!?]?$/);
+      if (m) {
+        return await this.actionCraft(m[1].trim(), bot);
+      }
+
+      // --- MINE / GET / FIND ore ---
+      m = lower.match(/\b(?:mine|get|find|dig up)\s+(?:me\s+)?(?:some|a|an)?\s*([a-z_\s]+?)(?:\s+ore)?(?:\s+please)?[.!?]?$/);
+      if (m) {
+        return await this.actionMine(m[1].trim(), bot);
+      }
+
+      return null; // not an action - let normal chat handling run
+    } catch (err) {
+      console.log('[NEKO] Action intent error:', err.message);
+      return null; // fall back to normal chat on unexpected errors
+    }
+  }
+
+  async actionComeHere(playerName, bot) {
+    const player = bot.players[playerName]?.entity;
+    if (!player) return `I can't see you right now 🤔 get closer?`;
+    if (!bot.pathfinder) return `My pathfinder isn't ready yet, give me a sec.`;
+
+    const { goals } = require('mineflayer-pathfinder');
+    bot.pathfinder.setGoal(new goals.GoalNear(player.position.x, player.position.y, player.position.z, 2));
+    return `On my way! 🏃`;
+  }
+
+  async actionFollow(playerName, bot) {
+    const player = bot.players[playerName]?.entity;
+    if (!player) return `I can't see you right now 🤔`;
+    if (!bot.pathfinder) return `My pathfinder isn't ready yet, give me a sec.`;
+
+    const { goals } = require('mineflayer-pathfinder');
+    this.followTarget = playerName;
+
+    if (this.followInterval) clearInterval(this.followInterval);
+    this.followInterval = setInterval(() => {
+      if (this.followTarget !== playerName) {
+        clearInterval(this.followInterval);
+        return;
+      }
+      const p = bot.players[playerName]?.entity;
+      if (p && bot.pathfinder) {
+        bot.pathfinder.setGoal(new goals.GoalFollow(p, 2), true);
+      }
+    }, 1000);
+
+    return `Following you! Say "stop" anytime 👣`;
+  }
+
+  async actionCraft(itemNameRaw, bot) {
+    const itemName = itemNameRaw.replace(/\s+/g, '_');
+    if (!itemName) return null;
+
+    let mcData;
+    try {
+      mcData = require('minecraft-data')(bot.version);
+    } catch (e) {
+      return `Can't access game data right now 😅`;
+    }
+
+    const item = mcData.itemsByName[itemName];
+    if (!item) {
+      return `I don't know what "${itemNameRaw}" is 🤔`;
+    }
+
+    // Look for a nearby crafting table for recipes that need one (e.g. tools)
+    const craftingTableBlock = bot.findBlock
+      ? bot.findBlock({ matching: mcData.blocksByName.crafting_table?.id, maxDistance: 16 })
+      : null;
+
+    let recipes = bot.recipesFor(item.id, null, 1, craftingTableBlock || null);
+    if ((!recipes || recipes.length === 0) && craftingTableBlock) {
+      // try without requiring the table in case it doesn't actually need one
+      recipes = bot.recipesFor(item.id, null, 1, null);
+    }
+
+    if (!recipes || recipes.length === 0) {
+      return `I don't have the materials${craftingTableBlock ? '' : ' (or a crafting table nearby)'} to make ${itemNameRaw} yet 😕`;
+    }
+
+    try {
+      if (craftingTableBlock) {
+        await bot.pathfinder?.goto?.(
+          new (require('mineflayer-pathfinder').goals.GoalNear)(
+            craftingTableBlock.position.x, craftingTableBlock.position.y, craftingTableBlock.position.z, 2
+          )
+        ).catch(() => {});
+      }
+      await bot.craft(recipes[0], 1, craftingTableBlock || null);
+      return `Crafted ${itemNameRaw}! ✅🔨`;
+    } catch (err) {
+      return `Tried to craft ${itemNameRaw} but something went wrong: ${err.message}`;
+    }
+  }
+
+  async actionMine(oreNameRaw, bot) {
+    const aliases = {
+      iron: 'iron_ore', gold: 'gold_ore', diamond: 'diamond_ore',
+      coal: 'coal_ore', emerald: 'emerald_ore', lapis: 'lapis_lazuli_ore',
+      redstone: 'redstone_ore', copper: 'copper_ore'
+    };
+    const key = oreNameRaw.replace(/\s+/g, '_');
+    const oreType = aliases[oreNameRaw] || (key.endsWith('_ore') ? key : `${key}_ore`);
+
+    let mcData;
+    try {
+      mcData = require('minecraft-data')(bot.version);
+    } catch (e) {
+      return `Can't access game data right now 😅`;
+    }
+    if (!mcData.blocksByName[oreType]) {
+      return `I don't recognize "${oreNameRaw}" as something I can mine 🤔`;
+    }
+
+    const block = bot.findBlock({ matching: mcData.blocksByName[oreType].id, maxDistance: 32 });
+    if (!block) {
+      return `Don't see any ${oreNameRaw} nearby, I'll keep an eye out 👀`;
+    }
+
+    try {
+      const { goals } = require('mineflayer-pathfinder');
+      await bot.pathfinder.goto(new goals.GoalGetToBlock(block.position.x, block.position.y, block.position.z));
+      await bot.dig(block);
+      return `Mined ${oreNameRaw}! ⛏️`;
+    } catch (err) {
+      return `Found ${oreNameRaw} but couldn't get to it: ${err.message}`;
+    }
+  }
+
+  /**
    * Handle special commands
    */
   async handleCommand(playerName, message, bot) {
@@ -188,7 +361,8 @@ class NekoChatHandler {
     const commands = {
       learn: () => {
     const r = strategyAdaptor.getAdaptationReport();
-    return `📚 Learning: ${r.adaptationLevel}/10 | Mobs: ${r.knownDangerousMobs} | Zones: ${r.knownSafeZones}`;
+    const level = isNaN(r.adaptationLevel) ? 0 : r.adaptationLevel;
+    return `📚 Learning: ${level}/10 | Mobs: ${r.knownDangerousMobs} | Zones: ${r.knownSafeZones}`;
   },
 
   knowledge: () => {

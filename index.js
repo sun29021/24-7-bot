@@ -1655,72 +1655,88 @@ module.exports = {
  * Find nearest ore of a specific type within radius
  * Returns: { position, type, distance } or null
  */
-function findNearestOre(oreType = 'diamond_ore', radiusBlocks = 30) {
-  if (!bot || !bot.entity || !bot.world) return null;
+const ORE_DATA = {
+  diamond_ore: { value: 100, priority: 1 },
+  gold_ore: { value: 50, priority: 2 },
+  iron_ore: { value: 30, priority: 3 },
+  emerald_ore: { value: 75, priority: 2 },
+  lapis_lazuli_ore: { value: 20, priority: 4 },
+  coal_ore: { value: 10, priority: 5 }
+};
+const ORE_TYPE_SET = new Set(Object.keys(ORE_DATA));
+
+// Cache last scan briefly so back-to-back calls (e.g. findBestOre calling
+// findNearestOre, or multiple checks within the same tick) don't each pay
+// the full cube-scan cost.
+let _oreScanCache = null;
+let _oreScanCacheAt = 0;
+const ORE_SCAN_CACHE_MS = 1500;
+const DEFAULT_ORE_RADIUS = 16; // was 30 - a 30-block cube scan is ~227k blocks; 16 is ~36k and still plenty for "nearby"
+
+/**
+ * Single-pass scan of the cube around the bot, collecting the nearest match
+ * for every known ore type in ONE sweep instead of one sweep per ore type.
+ * This is the expensive part - everything else should read from its result.
+ */
+function scanNearbyOres(radiusBlocks = DEFAULT_ORE_RADIUS) {
+  if (!bot || !bot.entity || !bot.world) return {};
+
+  const now = Date.now();
+  if (_oreScanCache && (now - _oreScanCacheAt) < ORE_SCAN_CACHE_MS && _oreScanCache.radius === radiusBlocks) {
+    return _oreScanCache.results;
+  }
 
   const playerPos = bot.entity.position;
-  const oreData = {
-    diamond_ore: { value: 100, priority: 1 },
-    gold_ore: { value: 50, priority: 2 },
-    iron_ore: { value: 30, priority: 3 },
-    emerald_ore: { value: 75, priority: 2 },
-    lapis_lazuli_ore: { value: 20, priority: 4 },
-    coal_ore: { value: 10, priority: 5 }
-  };
-
-  let nearestOre = null;
-  let nearestDistance = radiusBlocks;
-
-  // Search in a cube around the bot
   const searchRadius = Math.floor(radiusBlocks);
+  const results = {}; // oreType -> { position, type, distance, value }
+
   for (let x = -searchRadius; x <= searchRadius; x++) {
     for (let y = -searchRadius; y <= searchRadius; y++) {
       for (let z = -searchRadius; z <= searchRadius; z++) {
-        try {
-          const blockPos = playerPos.offset(x, y, z);
-          const block = bot.blockAt(blockPos);
+        const blockPos = playerPos.offset(x, y, z);
+        const block = bot.blockAt(blockPos);
+        if (!block || !ORE_TYPE_SET.has(block.name)) continue;
 
-          if (block && block.name === oreType) {
-            const dist = playerPos.distanceTo(blockPos);
-            if (dist < nearestDistance) {
-              nearestDistance = dist;
-              nearestOre = {
-                position: blockPos,
-                type: oreType,
-                distance: Math.round(dist),
-                value: oreData[oreType]?.value || 10
-              };
-            }
-          }
-        } catch (e) {
-          // ignore block access errors
+        const dist = playerPos.distanceTo(blockPos);
+        const existing = results[block.name];
+        if (!existing || dist < existing._rawDist) {
+          results[block.name] = {
+            position: blockPos,
+            type: block.name,
+            distance: Math.round(dist),
+            _rawDist: dist,
+            value: ORE_DATA[block.name]?.value || 10
+          };
         }
       }
     }
   }
 
-  return nearestOre;
+  _oreScanCache = { results, radius: radiusBlocks };
+  _oreScanCacheAt = now;
+  return results;
+}
+
+function findNearestOre(oreType = 'diamond_ore', radiusBlocks = DEFAULT_ORE_RADIUS) {
+  if (!bot || !bot.entity || !bot.world) return null;
+  const results = scanNearbyOres(radiusBlocks);
+  const ore = results[oreType];
+  if (!ore || ore.distance > radiusBlocks) return null;
+  return ore;
 }
 
 /**
  * Find the most valuable ore nearby (diamond > gold > iron, etc)
  * Returns: best ore or null
  */
-function findBestOre(radiusBlocks = 30) {
-  const oreTypes = [
-    'diamond_ore',
-    'emerald_ore',
-    'gold_ore',
-    'iron_ore',
-    'lapis_lazuli_ore',
-    'coal_ore'
-  ];
+function findBestOre(radiusBlocks = DEFAULT_ORE_RADIUS) {
+  const results = scanNearbyOres(radiusBlocks);
 
   let bestOre = null;
   let bestValue = -1;
 
-  for (const oreType of oreTypes) {
-    const ore = findNearestOre(oreType, radiusBlocks);
+  for (const oreType of Object.keys(ORE_DATA)) {
+    const ore = results[oreType];
     if (ore && ore.value > bestValue) {
       bestValue = ore.value;
       bestOre = ore;
@@ -1827,7 +1843,7 @@ async function mineOre(oreType = 'diamond_ore') {
     addLog(`[NEKO Mining] Starting mining for ${oreType}...`);
 
     // Step 1: Find ore
-    const ore = findNearestOre(oreType, 30);
+    const ore = findNearestOre(oreType, DEFAULT_ORE_RADIUS);
     if (!ore) {
       return {
         success: false,
@@ -2103,27 +2119,66 @@ let lastDebugLog = 0;
 addInterval(() => {
   if (!bot || !botState.connected) return;
   const now = Date.now();
-  
-  // Log every 10 seconds
-  if (now - lastDebugLog > 10000) {
+
+  // Log every 30 seconds, summary only (per-entity logging was spamming
+  // dozens of synchronous console writes per tick in mob-dense areas)
+  if (now - lastDebugLog > 30000) {
     lastDebugLog = now;
-    
+
     if (bot.entities) {
       const allEntities = Object.values(bot.entities).filter(e => e);
       const nearby = allEntities.filter(e => {
         const dist = bot.entity.position.distanceTo(e.position);
         return dist < 20;
       });
-      
+
       addLog(`[DEBUG] Total entities: ${allEntities.length}, Nearby (20m): ${nearby.length}`);
-      
-      // Log each nearby entity with ALL info
-      nearby.forEach(e => {
-        addLog(`[DEBUG] Entity: name="${e.name}" | type="${e.type}" | health=${e.health} | displayName="${e.displayName}"`);
-      });
     }
   }
-}, 1000);
+}, 5000);
+
+// ============================================================
+// HEAD TRACKING: look at nearby players to feel alive/aware
+// ============================================================
+let lastHeadTrackAt = 0;
+let lastLookedAtPlayer = null;
+const HEAD_TRACK_RANGE = 8; // blocks
+addInterval(() => {
+  if (!bot || !botState.connected || !bot.entity) return;
+
+  // Don't fight head-tracking with active combat/pathfinder aiming -
+  // only take over the head when bot isn't busy mid-swing.
+  if (bot.pathfinder && bot.pathfinder.isMoving && bot.pathfinder.isMoving()) {
+    // still fine to glance at players while walking, just less often
+    if (Date.now() - lastHeadTrackAt < 1500) return;
+  }
+
+  try {
+    const selfPos = bot.entity.position;
+    let nearestPlayer = null;
+    let nearestDist = HEAD_TRACK_RANGE;
+
+    for (const username in bot.players) {
+      const p = bot.players[username];
+      if (!p || !p.entity || username === bot.username) continue;
+      const dist = selfPos.distanceTo(p.entity.position);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestPlayer = p.entity;
+      }
+    }
+
+    if (nearestPlayer) {
+      const headPos = nearestPlayer.position.offset(0, nearestPlayer.height ? nearestPlayer.height * 0.85 : 1.6, 0);
+      bot.lookAt(headPos, false);
+      lastHeadTrackAt = Date.now();
+      lastLookedAtPlayer = nearestPlayer.username || null;
+    }
+  } catch (e) {
+    // ignore - never let head tracking crash anything
+  }
+}, 500);
+
       // Attempt creative mode (only works if bot has OP and enabled in settings)
       setTimeout(() => {
         if (bot && botState.connected && config.server["try-creative"]) {

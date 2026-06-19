@@ -90,7 +90,8 @@ class StrategyAdaptor {
       dangerZones: dangerCoordinates.slice(0, 10),
       preferredBiome: strategy.preferredBiome || 'cave',
       explorationRadius: 500,
-      returnHomeWhenHealthLow: true
+      returnHomeWhenHealthLow: true,
+      knownPlayers: Object.keys(memory.data.players || {}).length
     };
   }
 
