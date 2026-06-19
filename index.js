@@ -1287,6 +1287,310 @@ function createBot() {
       defaultMove.canDig = false;
       defaultMove.liquidCost = 1000;
       defaultMove.fallDamageCost = 1000;
+/**
+ * PHASE 3.1 - MINING SYSTEM HELPERS
+ * 
+ * These functions handle:
+ * - Finding nearby ore
+ * - Navigating to ore
+ * - Breaking ore blocks
+ * - Collecting drops
+ * 
+ * Add these to index.js (after the bot creation, before initializeModules)
+ */
+
+// ============================================================
+// MINING HELPERS
+// ============================================================
+
+/**
+ * Find nearest ore of a specific type within radius
+ * Returns: { position, type, distance } or null
+ */
+function findNearestOre(oreType = 'diamond_ore', radiusBlocks = 30) {
+  if (!bot || !bot.entity || !bot.world) return null;
+
+  const playerPos = bot.entity.position;
+  const oreData = {
+    diamond_ore: { value: 100, priority: 1 },
+    gold_ore: { value: 50, priority: 2 },
+    iron_ore: { value: 30, priority: 3 },
+    emerald_ore: { value: 75, priority: 2 },
+    lapis_lazuli_ore: { value: 20, priority: 4 },
+    coal_ore: { value: 10, priority: 5 }
+  };
+
+  let nearestOre = null;
+  let nearestDistance = radiusBlocks;
+
+  // Search in a cube around the bot
+  const searchRadius = Math.floor(radiusBlocks);
+  for (let x = -searchRadius; x <= searchRadius; x++) {
+    for (let y = -searchRadius; y <= searchRadius; y++) {
+      for (let z = -searchRadius; z <= searchRadius; z++) {
+        try {
+          const blockPos = playerPos.offset(x, y, z);
+          const block = bot.blockAt(blockPos);
+
+          if (block && block.name === oreType) {
+            const dist = playerPos.distanceTo(blockPos);
+            if (dist < nearestDistance) {
+              nearestDistance = dist;
+              nearestOre = {
+                position: blockPos,
+                type: oreType,
+                distance: Math.round(dist),
+                value: oreData[oreType]?.value || 10
+              };
+            }
+          }
+        } catch (e) {
+          // ignore block access errors
+        }
+      }
+    }
+  }
+
+  return nearestOre;
+}
+
+/**
+ * Find the most valuable ore nearby (diamond > gold > iron, etc)
+ * Returns: best ore or null
+ */
+function findBestOre(radiusBlocks = 30) {
+  const oreTypes = [
+    'diamond_ore',
+    'emerald_ore',
+    'gold_ore',
+    'iron_ore',
+    'lapis_lazuli_ore',
+    'coal_ore'
+  ];
+
+  let bestOre = null;
+  let bestValue = -1;
+
+  for (const oreType of oreTypes) {
+    const ore = findNearestOre(oreType, radiusBlocks);
+    if (ore && ore.value > bestValue) {
+      bestValue = ore.value;
+      bestOre = ore;
+    }
+  }
+
+  return bestOre;
+}
+
+/**
+ * Navigate bot to a target position using pathfinder
+ * Returns: promise that resolves when reached or rejects on timeout
+ */
+async function navigateToBlock(targetPos, maxDistance = 1.5) {
+  return new Promise((resolve, reject) => {
+    if (!bot || !bot.pathfinder) {
+      reject(new Error('Pathfinder not available'));
+      return;
+    }
+
+    try {
+      const { GoalBlock } = require('mineflayer-pathfinder').goals;
+      bot.pathfinder.setGoal(new GoalBlock(
+        Math.floor(targetPos.x),
+        Math.floor(targetPos.y),
+        Math.floor(targetPos.z)
+      ));
+
+      // Wait for bot to reach location
+      const timeout = setTimeout(() => {
+        reject(new Error('Navigation timeout'));
+      }, 30000); // 30 second timeout
+
+      const checkArrival = setInterval(() => {
+        if (!bot || !bot.entity) {
+          clearInterval(checkArrival);
+          clearTimeout(timeout);
+          reject(new Error('Bot disconnected'));
+          return;
+        }
+
+        const dist = bot.entity.position.distanceTo(targetPos);
+        if (dist < maxDistance) {
+          clearInterval(checkArrival);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 500);
+
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/**
+ * Break a block at target position
+ * Returns: promise that resolves when block is broken
+ */
+async function breakBlock(targetBlock) {
+  return new Promise((resolve, reject) => {
+    if (!bot) {
+      reject(new Error('Bot not available'));
+      return;
+    }
+
+    try {
+      const block = bot.blockAt(targetBlock.position);
+      
+      if (!block) {
+        reject(new Error('Block not found'));
+        return;
+      }
+
+      // Equip pickaxe if available
+      const pickaxe = bot.inventory.items().find(item => 
+        item.name.includes('pickaxe')
+      );
+
+      if (pickaxe) {
+        bot.equip(pickaxe, 'hand');
+      }
+
+      // Break the block
+      bot.dig(block).then(() => {
+        resolve();
+      }).catch((err) => {
+        reject(err);
+      });
+
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/**
+ * Mine a specific ore type
+ * Steps: Find → Navigate → Break → Collect
+ * Returns: { success, ore, message }
+ */
+async function mineOre(oreType = 'diamond_ore') {
+  try {
+    addLog(`[NEKO Mining] Starting mining for ${oreType}...`);
+
+    // Step 1: Find ore
+    const ore = findNearestOre(oreType, 30);
+    if (!ore) {
+      return {
+        success: false,
+        ore: oreType,
+        message: `No ${oreType} found nearby`
+      };
+    }
+
+    addLog(`[NEKO Mining] Found ${oreType} at distance ${ore.distance}`);
+
+    // Step 2: Navigate to ore
+    try {
+      await navigateToBlock(ore.position, 3);
+      addLog(`[NEKO Mining] Reached ore location`);
+    } catch (navErr) {
+      return {
+        success: false,
+        ore: oreType,
+        message: `Could not reach ore: ${navErr.message}`
+      };
+    }
+
+    // Step 3: Break ore
+    try {
+      await breakBlock(ore);
+      addLog(`[NEKO Mining] Successfully broke ${oreType}`);
+    } catch (breakErr) {
+      return {
+        success: false,
+        ore: oreType,
+        message: `Could not break ore: ${breakErr.message}`
+      };
+    }
+
+    // Step 4: Wait for item collection
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Step 5: Update memory
+    memory.collectItem(oreType, 1);
+    memory.learnPreference('Blocks', oreType, true);
+    memory.saveMemory();
+
+    addLog(`[NEKO Mining] Completed: ${oreType} mined and collected`);
+
+    return {
+      success: true,
+      ore: oreType,
+      message: `Successfully mined ${oreType}!`
+    };
+
+  } catch (error) {
+    addLog(`[NEKO Mining] Error: ${error.message}`);
+    return {
+      success: false,
+      ore: oreType,
+      message: `Mining error: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Main mining executor - finds best ore and mines it
+ * Can be called periodically or on demand
+ */
+async function executeMining() {
+  try {
+    if (!bot || !botState.connected) return;
+
+    // Find the best ore nearby
+    const bestOre = findBestOre(30);
+    
+    if (!bestOre) {
+      addLog(`[NEKO Mining] No valuable ore found nearby`);
+      return { success: false, message: 'No ore found' };
+    }
+
+    addLog(`[NEKO Mining] Found ${bestOre.type} - starting extraction`);
+
+    // Mine it
+    const result = await mineOre(bestOre.type);
+
+    // Chat reaction if successful
+    if (result.success && bot) {
+      setTimeout(() => {
+        const reactions = [
+          `${bestOre.type.replace('_ore', '').toUpperCase()}!! 💎 Going in collection`,
+          `Just mined ${bestOre.type.replace('_', ' ')}!`,
+          `Another one for the hoard! 📦`
+        ];
+        bot.chat(reactions[Math.floor(Math.random() * reactions.length)]);
+      }, 500);
+    }
+
+    return result;
+
+  } catch (error) {
+    addLog(`[NEKO Mining] Execution error: ${error.message}`);
+    return { success: false, message: error.message };
+  }
+}
+
+// Export for use in behaviors
+module.exports = {
+  findNearestOre,
+  findBestOre,
+  navigateToBlock,
+  breakBlock,
+  mineOre,
+  executeMining
+};
+      
 
       initializeModules(bot, mcData, defaultMove);
 
