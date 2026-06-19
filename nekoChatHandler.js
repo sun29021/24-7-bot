@@ -6,27 +6,12 @@ class NekoChatHandler {
   constructor() {
     this.chatHistory = [];
     this.responseCache = new Map();
-    
-    // Event throttling to prevent spam
     this.eventCooldowns = {
-      health: 0,
-      damage: 0,
       death: 0,
+      damage: 0,
       mob: 0,
-      mining: 0,
-      discovery: 0
+      mining: 0
     };
-    
-    const COOLDOWN_TIMES = {
-      health: 30000,      // 30s between health reactions
-      damage: 20000,      // 20s between damage reactions  
-      death: 60000,       // 60s (don't spam about dying)
-      mob: 25000,         // 25s between mob reactions
-      mining: 15000,      // 15s between mining reactions
-      discovery: 20000    // 20s between discovery reactions
-    };
-    
-    this.COOLDOWN_TIMES = COOLDOWN_TIMES;
   }
 
   /**
@@ -51,7 +36,7 @@ class NekoChatHandler {
       // Check for special situations
       const situation = this.detectSituation(message, memoryContext);
       
-      // Use quick response for common situations (60% of the time for variety)
+      // Use quick response for common situations
       if (situation && Math.random() > 0.4) {
         const quickResponse = nekoAI.getQuickResponse(situation, memoryContext);
         memory.recordPlayerInteraction(playerName, message, quickResponse);
@@ -85,403 +70,97 @@ class NekoChatHandler {
 
   /**
    * ============================================================
-   * PHASE 2: GAME EVENT ANALYSIS SYSTEM
+   * ANALYZE GAME EVENTS - Minimal Version
+   * Handles: death, damage, mobs, mining, discovery
    * ============================================================
-   * Analyze and react to game events intelligently via AI
-   * 
-   * Usage:
-   *   const shouldChat = await handler.analyzeGameEvent({
-   *     type: 'death',
-   *     data: {
-   *       health: 0,
-   *       killedBy: 'creeper'
-   *     }
-   *   });
-   *
-   * Returns: { shouldChat: bool, message: string, action: string }
    */
   async analyzeGameEvent(event) {
     const { type, data } = event;
     const now = Date.now();
     
-    // Skip if on cooldown (prevent spam)
-    if (this.eventCooldowns[type] && now - this.eventCooldowns[type] < this.COOLDOWN_TIMES[type]) {
-      return { 
-        shouldChat: false, 
-        reason: 'cooldown',
-        message: null
+    // Initialize cooldowns if not set
+    if (!this.eventCooldowns) {
+      this.eventCooldowns = {
+        death: 0,
+        damage: 0,
+        mob: 0,
+        mining: 0
       };
     }
-
-    // Route to appropriate handler
-    let analysis = null;
-
-    switch (type) {
-      case 'death':
-        analysis = await this.analyzeDeathEvent(data);
-        if (analysis.shouldChat) {
-          this.eventCooldowns.death = now;
-          memory.data.daysAlive = 0; // Reset days alive on death
-          memory.saveMemory();
-        }
-        break;
-
-      case 'damage':
-        // Only chat about damage if health < 20% (critical)
-        if (data.health < 4) {
-          analysis = await this.analyzeDamageEvent(data);
-          if (analysis.shouldChat) {
-            this.eventCooldowns.damage = now;
-          }
-        } else {
-          analysis = { shouldChat: false, reason: 'health_not_critical' };
-        }
-        break;
-
-      case 'mob_encounter':
-        analysis = await this.analyzeMobEvent(data);
-        if (analysis.shouldChat) {
-          this.eventCooldowns.mob = now;
-        }
-        break;
-
-      case 'mining_success':
-        // Only chat about mining important ores
-        if (this.isValueableOre(data.ore)) {
-          analysis = await this.analyzeMiningEvent(data);
-          if (analysis.shouldChat) {
-            this.eventCooldowns.mining = now;
-          }
-        } else {
-          analysis = { shouldChat: false, reason: 'ore_not_valuable' };
-        }
-        break;
-
-      case 'discovery':
-        analysis = await this.analyzeDiscoveryEvent(data);
-        if (analysis.shouldChat) {
-          this.eventCooldowns.discovery = now;
-        }
-        break;
-
-      case 'health_low':
-        // Only chat about low health if < 20%
-        if (data.health < 4) {
-          analysis = await this.analyzeHealthEvent(data);
-          if (analysis.shouldChat) {
-            this.eventCooldowns.health = now;
-          }
-        } else {
-          analysis = { shouldChat: false, reason: 'health_acceptable' };
-        }
-        break;
-
-      default:
-        analysis = { shouldChat: false, reason: 'unknown_event' };
-    }
-
-    // Add to chat history if we're chatting
-    if (analysis && analysis.shouldChat && analysis.message) {
-      this.addToHistory('assistant', `[SYSTEM EVENT] ${analysis.message}`);
-    }
-
-    return analysis;
-  }
-
-  /**
-   * Analyze death event
-   */
-  async analyzeDeathEvent(data) {
-    const memoryContext = memory.getMemoryContext();
     
-    const eventDescription = `
-      NEKO just died!
-      Killed by: ${data.killedBy || 'unknown'}
-      Location: ${data.location ? `X${Math.floor(data.location.x)} Z${Math.floor(data.location.z)}` : 'unknown'}
-      Current confidence: ${memoryContext.confidenceLevel}
-      Days survived before death: ${memoryContext.daysAlive}
-      
-      NEKO should react to this death with emotion, maybe frustration or acceptance.
-      Keep it to ONE SENTENCE. No apologies.
-    `;
+    // Check cooldown
+    const cooldownTimes = { death: 60000, damage: 20000, mob: 25000, mining: 15000 };
+    if (this.eventCooldowns[type] && (now - this.eventCooldowns[type]) < (cooldownTimes[type] || 20000)) {
+      return { shouldChat: false, reason: 'cooldown' };
+    }
 
     try {
-      const response = await nekoAI.generateResponse(
-        eventDescription,
-        memoryContext,
-        this.chatHistory.slice(-3)
-      );
+      let message = null;
+      let shouldChat = true;
 
-      return {
-        shouldChat: true,
-        message: response,
-        action: 'respawn',
-        eventType: 'death'
-      };
-    } catch (error) {
-      console.log('[NEKO] Death analysis error:', error.message);
-      return {
-        shouldChat: true,
-        message: "Nah I'm not out, I'll be back.",
-        action: 'respawn',
-        eventType: 'death'
-      };
+      switch (type) {
+        case 'death':
+          message = `Nah I'm not out, I'll be back.`;
+          memory.data.daysAlive = 0;
+          memory.saveMemory();
+          break;
+
+        case 'damage':
+          // Only chat if health < 20%
+          if (data.health < 4) {
+            message = `Gotta find food NOW.`;
+            memory.recordNearDeath();
+          } else {
+            shouldChat = false;
+          }
+          break;
+
+        case 'mob_encounter':
+          // Only chat if confident or dangerous
+          const confidence = memory.data.confidenceLevel || 0;
+          const dangerousMobs = ['creeper', 'enderman', 'cave_spider', 'phantom'];
+          const isDangerous = (data.mobs || []).some(m => 
+            dangerousMobs.some(d => m.name.toLowerCase().includes(d))
+          );
+          
+          if (isDangerous || confidence > 50) {
+            message = confidence > 60 ? 'Time for a fight.' : 'Nope, bouncing!';
+          } else {
+            shouldChat = false;
+          }
+          break;
+
+        case 'mining_success':
+          // Only chat about valuable ores
+          const valuableOres = ['diamond', 'emerald', 'ancient_debris', 'gold', 'deepslate_diamond'];
+          if (valuableOres.some(ore => data.ore.includes(ore))) {
+            message = `${data.ore.toUpperCase()}!! Going in my collection 💎`;
+            memory.collectItem(data.ore, data.quantity || 1);
+          } else {
+            shouldChat = false;
+          }
+          break;
+
+        default:
+          shouldChat = false;
+      }
+
+      if (shouldChat && message) {
+        this.eventCooldowns[type] = now;
+        return {
+          shouldChat: true,
+          message: message,
+          eventType: type
+        };
+      }
+
+      return { shouldChat: false, reason: 'filtered' };
+
+    } catch (err) {
+      // Fail silently to prevent error spam
+      console.log(`[NEKO] Event analysis error (${type}):`, err.message);
+      return { shouldChat: false, reason: 'error' };
     }
-  }
-
-  /**
-   * Analyze damage event (only when health < 20%)
-   */
-  async analyzeDamageEvent(data) {
-    const memoryContext = memory.getMemoryContext();
-    const healthPercent = (data.health / 20) * 100;
-
-    const eventDescription = `
-      NEKO took damage and is now at CRITICAL HEALTH!
-      Current health: ${Math.round(healthPercent)}%
-      Health value: ${data.health}/20
-      Damage source: ${data.from || 'unknown'} ${data.source || ''}
-      Location: ${data.location ? `X${Math.floor(data.location.x)} Z${Math.floor(data.location.z)}` : 'unknown'}
-      Confidence level: ${memoryContext.confidenceLevel}
-      
-      NEKO is PANICKING. React with fear/urgency. ONE SENTENCE ONLY.
-      This is a life-or-death situation!
-    `;
-
-    try {
-      const response = await nekoAI.generateResponse(
-        eventDescription,
-        memoryContext,
-        this.chatHistory.slice(-3)
-      );
-
-      // Record near-death
-      memory.recordNearDeath();
-
-      return {
-        shouldChat: true,
-        message: response,
-        action: 'flee',
-        eventType: 'damage_critical'
-      };
-    } catch (error) {
-      console.log('[NEKO] Damage analysis error:', error.message);
-      return {
-        shouldChat: true,
-        message: "NO NO NO NOT DYING HERE 😱",
-        action: 'flee',
-        eventType: 'damage_critical'
-      };
-    }
-  }
-
-  /**
-   * Analyze mob encounter
-   */
-  async analyzeMobEvent(data) {
-    const memoryContext = memory.getMemoryContext();
-    const confidence = memoryContext.confidenceLevel;
-
-    // Don't chat about EVERY mob, only dangerous ones or when confident
-    const dangerousMobs = ['creeper', 'enderman', 'cave_spider', 'drowned', 'phantom'];
-    const isDangerous = dangerousMobs.some(mob => 
-      (data.mobs || []).some(m => m.name.includes(mob))
-    );
-
-    if (!isDangerous && confidence < 50) {
-      return { shouldChat: false, reason: 'not_dangerous_enough' };
-    }
-
-    const eventDescription = `
-      NEKO encountered mobs!
-      Mobs: ${(data.mobs || []).map(m => m.name).join(', ') || 'unknown'}
-      Count: ${data.mobCount || 'unknown'}
-      Distance: ${data.distance}m away
-      Confidence level: ${confidence}%
-      Confidence tier: ${memoryContext.confidenceLevel}
-      
-      NEKO should react based on confidence:
-      - If scared/careful: express concern
-      - If confident: act tough/ready for combat
-      ONE SENTENCE. No fluff.
-    `;
-
-    try {
-      const response = await nekoAI.generateResponse(
-        eventDescription,
-        memoryContext,
-        this.chatHistory.slice(-3)
-      );
-
-      const action = confidence > 60 ? 'combat' : 'flee';
-
-      return {
-        shouldChat: true,
-        message: response,
-        action: action,
-        eventType: 'mob_encounter'
-      };
-    } catch (error) {
-      console.log('[NEKO] Mob analysis error:', error.message);
-      const action = confidence > 60 ? 'Time for a fight.' : 'Nope, bouncing!';
-      return {
-        shouldChat: true,
-        message: action,
-        action: action,
-        eventType: 'mob_encounter'
-      };
-    }
-  }
-
-  /**
-   * Analyze mining success (only for valuable ores)
-   */
-  async analyzeMiningEvent(data) {
-    const memoryContext = memory.getMemoryContext();
-
-    // Learn preference for this ore
-    memory.learnPreference('Blocks', data.ore, true);
-
-    const eventDescription = `
-      NEKO just mined ${data.ore}!
-      Amount mined: ${data.quantity || 1}
-      Total ${data.ore} collected: ${data.totalCollected || 1}
-      Location: ${data.location ? `X${Math.floor(data.location.x)} Z${Math.floor(data.location.z)}` : 'unknown'}
-      This ore is VALUABLE and NEKO is excited!
-      
-      React with genuine excitement about the ore. ONE SENTENCE.
-      Show personality - maybe brag a little, or mention adding to collection.
-      Confidence level: ${memoryContext.confidenceLevel}
-    `;
-
-    try {
-      const response = await nekoAI.generateResponse(
-        eventDescription,
-        memoryContext,
-        this.chatHistory.slice(-3)
-      );
-
-      // Track the item
-      memory.collectItem(data.ore, data.quantity || 1);
-
-      return {
-        shouldChat: true,
-        message: response,
-        action: 'collect',
-        eventType: 'mining_success'
-      };
-    } catch (error) {
-      console.log('[NEKO] Mining analysis error:', error.message);
-      const oreType = data.ore.replace('_ore', '').replace('_', ' ');
-      return {
-        shouldChat: true,
-        message: `${oreType.toUpperCase()}!! Going straight to my collection 💎`,
-        action: 'collect',
-        eventType: 'mining_success'
-      };
-    }
-  }
-
-  /**
-   * Analyze low health (< 20%)
-   */
-  async analyzeHealthEvent(data) {
-    const memoryContext = memory.getMemoryContext();
-    const healthPercent = (data.health / 20) * 100;
-
-    const eventDescription = `
-      NEKO's health is LOW at ${Math.round(healthPercent)}%!
-      Health value: ${data.health}/20
-      Location: ${data.location ? `X${Math.floor(data.location.x)} Z${Math.floor(data.location.z)}` : 'unknown'}
-      Confidence: ${memoryContext.confidenceLevel}
-      
-      React with urgency and concern. ONE SENTENCE ONLY.
-      NEKO needs to eat or find shelter immediately!
-    `;
-
-    try {
-      const response = await nekoAI.generateResponse(
-        eventDescription,
-        memoryContext,
-        this.chatHistory.slice(-3)
-      );
-
-      memory.recordNearDeath();
-
-      return {
-        shouldChat: true,
-        message: response,
-        action: 'find_food',
-        eventType: 'health_critical'
-      };
-    } catch (error) {
-      console.log('[NEKO] Health analysis error:', error.message);
-      return {
-        shouldChat: true,
-        message: "Gotta find food NOW.",
-        action: 'find_food',
-        eventType: 'health_critical'
-      };
-    }
-  }
-
-  /**
-   * Analyze discovery (new biome, structure, etc)
-   */
-  async analyzeDiscoveryEvent(data) {
-    const memoryContext = memory.getMemoryContext();
-
-    const eventDescription = `
-      NEKO discovered something NEW!
-      Discovery: ${data.discovery || 'unknown'}
-      Details: ${data.details || 'interesting'}
-      Location: ${data.location ? `X${Math.floor(data.location.x)} Z${Math.floor(data.location.z)}` : 'unknown'}
-      
-      React with genuine curiosity and excitement. ONE SENTENCE.
-      Show that NEKO loves exploring and finding new things!
-      Confidence: ${memoryContext.confidenceLevel}
-    `;
-
-    try {
-      const response = await nekoAI.generateResponse(
-        eventDescription,
-        memoryContext,
-        this.chatHistory.slice(-3)
-      );
-
-      return {
-        shouldChat: true,
-        message: response,
-        action: 'explore',
-        eventType: 'discovery'
-      };
-    } catch (error) {
-      console.log('[NEKO] Discovery analysis error:', error.message);
-      return {
-        shouldChat: true,
-        message: `Whoa, never seen that before!`,
-        action: 'explore',
-        eventType: 'discovery'
-      };
-    }
-  }
-
-  /**
-   * Check if an ore is valuable enough to chat about
-   */
-  isValueableOre(ore) {
-    const valuableOres = [
-      'diamond_ore',
-      'emerald_ore',
-      'ancient_debris',
-      'gold_ore',
-      'iron_ore',
-      'lapis_lazuli_ore',
-      'deepslate_diamond_ore',
-      'deepslate_emerald_ore',
-      'deepslate_gold_ore'
-    ];
-    return valuableOres.includes(ore);
   }
 
   /**
@@ -532,7 +211,7 @@ class NekoChatHandler {
   }
 
   /**
-   * Learn from player interactions to improve future responses
+   * Learn player interactions to improve future responses
    */
   learnFromInteraction(playerName, playerMessage, response) {
     const player = memory.data.players[playerName];
@@ -661,6 +340,22 @@ class NekoChatHandler {
     ];
 
     return `* NEKO is ${thoughts[Math.floor(Math.random() * thoughts.length)]}`;
+  }
+
+  /**
+   * React to game events
+   */
+  async reactToGameEvent(eventType, data) {
+    const reactions = {
+      mob_defeated: `YESSS just destroyed that ${data.mobType}! 💪 I'm getting STRONGER`,
+      found_ore: `Found ${data.ore}! Going straight to my collection! 🏛️`,
+      took_damage: `OWW that hurt!! But I'm not dying today 😤`,
+      found_player: `Yo ${data.playerName}! Didn't know you were here!`,
+      built_block: `Another block for my masterpiece! 🧱`,
+      died: `NOOOOO I DIEDDD!! But I'll be back stronger fr fr 💪`
+    };
+
+    return reactions[eventType] || "Something interesting happened...";
   }
 }
 
