@@ -31,25 +31,7 @@ let botState = {
   errors: [],
   wasThrottled: false,
 };
-// Response throttling to prevent chat spam
-const responseThrottle = {
-  lastResponseTime: 0,
-  lastResponseText: '',
-  minInterval: 5000
-};
- 
-function shouldSendResponse(message) {
-  const now = Date.now();
-  if (message === responseThrottle.lastResponseText) {
-    return false;
-  }
-  if (now - responseThrottle.lastResponseTime < responseThrottle.minInterval) {
-    return false;
-  }
-  responseThrottle.lastResponseTime = now;
-  responseThrottle.lastResponseText = message;
-  return true;
-}
+
 // Health check endpoint for monitoring
 app.get('/', (req, res) => {
   res.send(`
@@ -1305,7 +1287,7 @@ function createBot() {
       const mcData = require("minecraft-data")(bot.version);
       const defaultMove = new Movements(bot, mcData);
       defaultMove.allowFreeMotion = false;
-      defaultMove.canDig = false;
+      defaultMove.canDig = true;
       defaultMove.liquidCost = 1000;
       defaultMove.fallDamageCost = 1000;
 
@@ -1488,6 +1470,9 @@ async function fleeMobs() {
 /**
  * Fight a mob - attack it
  */
+// Track last combat chat to prevent spam
+let lastCombatChat = 0;
+
 async function fightMob(targetMob) {
   try {
     if (!bot) return { success: false };
@@ -1523,10 +1508,14 @@ async function fightMob(targetMob) {
     // Fight for max 5 seconds
     setTimeout(() => clearInterval(attackLoop), 5000);
 
-    // Chat reaction
-    setTimeout(() => {
-      if (bot) bot.chat(`Take that, ${targetMob.name}! 💪`);
-    }, 500);
+    // Chat reaction - ONLY once per 15 seconds to prevent spam
+    const now = Date.now();
+    if (now - lastCombatChat > 15000) {
+      lastCombatChat = now;
+      setTimeout(() => {
+        if (bot) bot.chat(`Take that, ${targetMob.name}! 💪`);
+      }, 500);
+    }
 
     return { success: true, action: 'fought' };
 
@@ -1626,7 +1615,8 @@ addInterval(async () => {
     try {
       await strategyAdaptor.adaptBehavior();
       const report = strategyAdaptor.getAdaptationReport();
-      addLog(`[NEKO Learning] Level: ${report.adaptationLevel}/10`);
+      const level = isNaN(report.adaptationLevel) ? 0 : report.adaptationLevel;
+      addLog(`[NEKO Learning] Level: ${level}/10`);
     } catch (e) {
       console.log('[Learning] Error:', e.message);
     }
@@ -1975,38 +1965,7 @@ addInterval(async () => {
     }
   }
 }, 2000);
-async function buildBase() {
-  try {
-    const botPos = bot.entity.position;
-    const positions = [
-      { x: botPos.x + 1, y: botPos.y, z: botPos.z },
-      { x: botPos.x - 1, y: botPos.y, z: botPos.z },
-      { x: botPos.x, y: botPos.y, z: botPos.z + 1 },
-      { x: botPos.x, y: botPos.y, z: botPos.z - 1 }
-    ];
-    
-    let placed = 0;
-    for (const pos of positions) {
-      try {
-        const block = bot.blockAt(pos.x, pos.y, pos.z);
-        if (block && block.name === 'air') {
-          const material = bot.inventory.items().find(item => 
-            item.name.includes('dirt') || item.name.includes('stone')
-          );
-          if (material) {
-            await bot.equip(material, 'hand');
-            await bot.placeBlock(block);
-            placed++;
-            await new Promise(r => setTimeout(r, 200));
-          }
-        }
-      } catch (e) {}
-    }
-    return { upgraded: placed > 0, message: `Placed ${placed} blocks` };
-  } catch (error) {
-    return { upgraded: false, message: 'Build failed' };
-  }
-}
+
 // ============================================================
 // MAIN BEHAVIOR DECISION LOOP
 // ============================================================
@@ -2079,8 +2038,8 @@ addInterval(async () => {
             z: bot.entity.position.z + (Math.random() - 0.5) * 100
           };
           try {
-            bot.pathfinder.setMovements(bot.movement);
-            bot.pathfinder.setGoal(new (require('mineflayer-pathfinder')).goals.GoalBlock(target.x, bot.entity.position.y, target.z));
+            bot.pathfinder.setMovements(defaultMove);
+            bot.pathfinder.setGoal(new GoalBlock(Math.floor(target.x), Math.floor(bot.entity.position.y), Math.floor(target.z)));
             addLog(`[NEKO Behavior] Exploring towards X: ${Math.round(target.x)}, Z: ${Math.round(target.z)}`);
           } catch (e) {
             addLog(`[NEKO Behavior] Exploration error: ${e.message}`);
@@ -2090,20 +2049,20 @@ addInterval(async () => {
         case 'FLEE':
           // Move away from mobs
           const fleeTarget = {
-            x: bot.entity.position.x - Math.sign(environment.nearbyMobs[0]?.distance || 0) * 50,
-            z: bot.entity.position.z - Math.sign(environment.nearbyMobs[0]?.distance || 0) * 50
+            x: bot.entity.position.x + (Math.random() - 0.5) * 80,
+            z: bot.entity.position.z + (Math.random() - 0.5) * 80
           };
           try {
-            bot.pathfinder.setMovements(bot.movement);
-            bot.pathfinder.setGoal(new (require('mineflayer-pathfinder')).goals.GoalBlock(fleeTarget.x, bot.entity.position.y, fleeTarget.z));
+            bot.pathfinder.setMovements(defaultMove);
+            bot.pathfinder.setGoal(new GoalBlock(Math.floor(fleeTarget.x), Math.floor(bot.entity.position.y), Math.floor(fleeTarget.z)));
             addLog(`[NEKO] FLEEING FROM MOBS!`);
           } catch (e) {}
           break;
           
         case 'BUILD_BASE':
-  result = await buildBase();
-  addLog(`[NEKO Behavior] Building: ${result.message}`);
-  break;
+          result = await nekoBehavior.buildBase(bot);
+          addLog(`[NEKO Behavior] Building: ${result.upgraded ? 'Upgraded!' : result.message}`);
+          break;
           
         case 'FIND_FOOD':
           try {
@@ -2136,47 +2095,7 @@ addInterval(async () => {
 // ============================================================
 // MINING EXECUTION (if executeMining doesn't exist)
 // ============================================================
-async function executeMining() {
-  try {
-    // Find nearest valuable ore
-    const ores = ['diamond_ore', 'gold_ore', 'iron_ore', 'coal_ore'];
-    
-    let bestOre = null;
-    let closestDist = 999;
-    
-    if (bot.blockAt) {
-      for (let x = -20; x <= 20; x++) {
-        for (let z = -20; z <= 20; z++) {
-          for (let y = -64; y <= 70; y++) {
-            const block = bot.blockAt(
-              bot.entity.position.x + x,
-              bot.entity.position.y + y,
-              bot.entity.position.z + z
-            );
-            
-            if (block && ores.some(ore => block.name.includes(ore))) {
-              const dist = Math.hypot(x, z);
-              if (dist < closestDist) {
-                closestDist = dist;
-                bestOre = { name: block.name, x: bot.entity.position.x + x, y: bot.entity.position.y + y, z: bot.entity.position.z + z };
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    if (bestOre && closestDist < 20) {
-      addLog(`[NEKO Mining] Found ${bestOre.name} at distance ${Math.round(closestDist)}`);
-      return { success: true, message: `Found ${bestOre.name}` };
-    }
-    
-    return { success: false, message: 'No ore found' };
-    
-  } catch (error) {
-    return { success: false, message: error.message };
-  }
-}
+// (duplicate executeMining removed - using the full version defined above)
       // ============================================================
 // DEBUG: Entity Detection Logger
 // ============================================================
@@ -2274,14 +2193,12 @@ bot.on('death', async (reason) => {
     };
     
     const analysis = await nekoChatHandler.analyzeGameEvent(event);
- 
+    
     if (analysis && analysis.shouldChat && analysis.message) {
-      if (shouldSendResponse(analysis.message)) {
-        setTimeout(() => {
-          bot.chat(analysis.message);
-          addLog(`[NEKO Event] Death reaction: ${analysis.message}`);
-        }, 500);
-      }
+      setTimeout(() => {
+        bot.chat(analysis.message);
+        addLog(`[NEKO Event] Death reaction: ${analysis.message}`);
+      }, 500);
     }
   } catch (e) {
     console.log('[NEKO] Death event error:', e.message);
@@ -2314,10 +2231,8 @@ bot.on('health', async () => {
     const analysis = await nekoChatHandler.analyzeGameEvent(event);
     
     if (analysis && analysis.shouldChat && analysis.message) {
-      if (shouldSendResponse(analysis.message)) {
-        bot.chat(analysis.message);
-        addLog(`[NEKO Event] Damage reaction (health ${bot.health}/20): ${analysis.message}`);
-      }
+      bot.chat(analysis.message);
+      addLog(`[NEKO Event] Damage reaction (health ${bot.health}/20): ${analysis.message}`);
     }
   } catch (e) {
     console.log('[NEKO] Damage event error:', e.message);
@@ -2367,7 +2282,7 @@ addInterval(async () => {
   const mobs = getNearbyMobs(20);
   const now = Date.now();
   
-  if (mobs.length > 0 && now - lastMobWarning > 25000) { // 25s cooldown
+  if (mobs.length > 0 && now - lastMobWarning > 60000) { // 60s cooldown - prevents "Time for a fight" spam
     try {
       lastMobWarning = now;
       
@@ -2376,9 +2291,9 @@ addInterval(async () => {
         dangerousMobs.some(dm => m.name.toLowerCase().includes(dm))
       );
       
-      // Only analyze if dangerous or if bot is confident enough
+      // Only analyze if dangerous mob OR bot is very confident
       const confidence = memory.data.confidenceLevel;
-      if (hasDangerousMob || confidence > 0) {
+      if (hasDangerousMob || confidence > 60) {
         const event = {
           type: 'mob_encounter',
           data: {
@@ -2392,10 +2307,8 @@ addInterval(async () => {
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
         if (analysis && analysis.shouldChat && analysis.message) {
-          if (shouldSendResponse(analysis.message)) {
-            bot.chat(analysis.message);
-            addLog(`[NEKO Event] Mob encounter (${mobs.length} mobs): ${analysis.message}`);
-          }
+          bot.chat(analysis.message);
+          addLog(`[NEKO Event] Mob encounter (${mobs.length} mobs): ${analysis.message}`);
         }
       }
     } catch (e) {
@@ -2416,6 +2329,10 @@ bot.on('diggingCompleted', (block) => {
     if (!block || !block.name) return;
     
     const oreType = block.name;
+
+    // Always record the mined block in memory so inventory/base-building stays updated
+    memory.collectItem(oreType, 1);
+
     const valuableOres = [
       'diamond_ore', 'emerald_ore', 'ancient_debris', 'gold_ore', 'iron_ore',
       'lapis_lazuli_ore', 'deepslate_diamond_ore', 'deepslate_emerald_ore', 'deepslate_gold_ore'
@@ -2437,12 +2354,10 @@ bot.on('diggingCompleted', (block) => {
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
         if (analysis && analysis.shouldChat && analysis.message) {
-          if (shouldSendResponse(analysis.message)) {
           setTimeout(() => {
             bot.chat(analysis.message);
             addLog(`[NEKO Event] Mined ${oreType}: ${analysis.message}`);
           }, 300);
-        }
         }
       })();
     }
@@ -2485,10 +2400,8 @@ addInterval(() => {
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
         if (analysis && analysis.shouldChat && analysis.message) {
-          if (shouldSendResponse(analysis.message)) {
           bot.chat(analysis.message);
           addLog(`[NEKO Event] Discovery: ${analysis.message}`);
-        }
         }
       })();
     }

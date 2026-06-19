@@ -26,6 +26,16 @@ class NekoChatHandler {
         return await this.handleCommand(playerName, message, bot);
       }
 
+      // Detect if player is telling NEKO their name
+      const nameMatch = message.match(/my name is (\w+)|call me (\w+)|ami (\w+)|amare (\w+) dako|amake (\w+) bolo/i);
+      if (nameMatch) {
+        const nickname = nameMatch[1] || nameMatch[2] || nameMatch[3] || nameMatch[4] || nameMatch[5];
+        memory.saveNickname(playerName, nickname);
+        const response = `Got it, I'll call you ${nickname} from now on 😏`;
+        memory.recordPlayerInteraction(playerName, message, response);
+        return response;
+      }
+
       // Get memory context
       const memoryContext = memory.getMemoryContext();
 
@@ -40,14 +50,18 @@ class NekoChatHandler {
       
       // Use quick response for common situations
       if (situation && Math.random() > 0.4) {
-        const quickResponse = nekoAI.getQuickResponse(situation, memoryContext);
+        const quickResponse = nekoAI.getQuickResponse(situation, memoryContext, playerName);
         memory.recordPlayerInteraction(playerName, message, quickResponse);
         return quickResponse;
       }
 
-      // Use AI for varied responses
+      // Use nickname if player has set one
+      const displayName = memory.getDisplayName(playerName);
+
+      // Use AI for varied responses - pass playerName for role/personality detection
       const aiResponse = await nekoAI.generateResponse(
-        `${playerName}: ${message}`,
+        playerName,
+        message,
         memoryContext,
         recentChat
       );
