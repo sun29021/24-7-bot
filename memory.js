@@ -19,7 +19,7 @@ class NekoMemory {
 
     return {
       // Personality & Growth
-      confidenceLevel: 1,
+      confidenceLevel: 10,
       daysAlive: 0,
       totalDeathsAvoided: 0,
       lastSurvivalCheck: Date.now(),
@@ -83,14 +83,16 @@ class NekoMemory {
       this.data.lastSurvivalCheck = Date.now();
       this.saveMemory();
     }
-    return this.data.confidenceLevel;
+    return Math.max(0, Math.min(100, this.data.confidenceLevel || 10));
   }
 
   getConfidenceLevel() {
     this.updateConfidence();
-    if (this.data.confidenceLevel <= 20) return 'SCARED';
-    if (this.data.confidenceLevel <= 40) return 'CAREFUL';
-    if (this.data.confidenceLevel <= 60) return 'CONFIDENT';
+    const conf = Math.max(0, Math.min(100, this.data.confidenceLevel || 10));
+    
+    if (conf <= 20) return 'SCARED';
+    if (conf <= 40) return 'CAREFUL';
+    if (conf <= 60) return 'CONFIDENT';
     return 'VERY_CONFIDENT';
   }
 
@@ -121,15 +123,15 @@ class NekoMemory {
 
   // Collection tracking
   collectItem(itemName, quantity = 1) {
-    const lowerName = itemName.toLowerCase();
+    const lowerName = (itemName || 'unknown').toLowerCase();
     
     if (this.data.inventory[lowerName] !== undefined) {
-      this.data.inventory[lowerName] += quantity;
+      this.data.inventory[lowerName] = Math.max(0, (this.data.inventory[lowerName] || 0) + quantity);
     } else {
-      this.data.inventory.other[lowerName] = (this.data.inventory.other[lowerName] || 0) + quantity;
+      this.data.inventory.other[lowerName] = Math.max(0, (this.data.inventory.other[lowerName] || 0) + quantity);
     }
 
-    this.data.base.resourcesCollected += quantity;
+    this.data.base.resourcesCollected = Math.max(0, (this.data.base.resourcesCollected || 0) + quantity);
     this.saveMemory();
   }
 
@@ -140,25 +142,33 @@ class NekoMemory {
   }
 
   upgradeBase(nextUpgrade) {
-    this.data.base.upgrades.push(nextUpgrade);
+    if (!this.data.base.upgrades) {
+      this.data.base.upgrades = ['dirt_hut'];
+    }
+    if (!this.data.base.upgrades.includes(nextUpgrade)) {
+      this.data.base.upgrades.push(nextUpgrade);
+    }
     this.data.base.nextUpgrade = this.getNextUpgrade();
     this.saveMemory();
   }
 
   getNextUpgrade() {
     const upgrades = ['dirt_hut', 'wooden_house', 'stone_base', 'brick_mansion', 'nether_sanctuary'];
-    const currentIndex = upgrades.findIndex(u => this.data.base.upgrades.includes(u));
+    const currentIndex = (this.data.base.upgrades || []).findIndex(u => upgrades.includes(u));
     return upgrades[currentIndex + 1] || 'mega_base';
   }
 
   // Danger tracking
   recordNearDeath() {
-    this.data.nearDeathCount++;
+    this.data.nearDeathCount = (this.data.nearDeathCount || 0) + 1;
     this.data.lastMobPanic = Date.now();
     this.saveMemory();
   }
 
   recordDanger(dangerType, location) {
+    if (!this.data.preferences.dangerZones) {
+      this.data.preferences.dangerZones = [];
+    }
     this.data.preferences.dangerZones.push({
       type: dangerType,
       location,
@@ -170,11 +180,12 @@ class NekoMemory {
   // Learning preferences
   learnPreference(category, value, isPositive = true) {
     if (isPositive) {
-      if (!this.data.preferences[`favorite${category}`]) {
-        this.data.preferences[`favorite${category}`] = [];
+      const key = `favorite${category}`;
+      if (!this.data.preferences[key]) {
+        this.data.preferences[key] = [];
       }
-      if (!this.data.preferences[`favorite${category}`].includes(value)) {
-        this.data.preferences[`favorite${category}`].push(value);
+      if (!this.data.preferences[key].includes(value)) {
+        this.data.preferences[key].push(value);
       }
     }
     this.saveMemory();
@@ -182,26 +193,28 @@ class NekoMemory {
 
   // Get memory context for AI
   getMemoryContext() {
+    const conf = Math.max(0, Math.min(100, this.data.confidenceLevel || 10));
+    
     return {
       confidenceLevel: this.getConfidenceLevel(),
-      actualConfidence: Math.round(this.data.confidenceLevel),
-      daysAlive: this.data.daysAlive,
-      baseUpgrades: this.data.base.upgrades,
-      nextUpgrade: this.data.base.nextUpgrade,
-      itemsCollected: this.data.inventory,
-      playerCount: Object.keys(this.data.players).length,
-      nearDeathCount: this.data.nearDeathCount,
-      preferences: this.data.preferences,
-      recentPlayers: Object.keys(this.data.players).slice(-5)
+      actualConfidence: Math.round(conf),
+      daysAlive: Math.max(0, this.data.daysAlive || 0),
+      baseUpgrades: this.data.base?.upgrades || ['dirt_hut'],
+      nextUpgrade: this.data.base?.nextUpgrade || 'wooden_house',
+      itemsCollected: this.data.inventory || { diamonds: 0, gold: 0, iron: 0, wood: 0, stone: 0, other: {} },
+      playerCount: Object.keys(this.data.players || {}).length,
+      nearDeathCount: Math.max(0, this.data.nearDeathCount || 0),
+      preferences: this.data.preferences || {},
+      recentPlayers: Object.keys(this.data.players || {}).slice(-5)
     };
   }
 
   getPlayerHistory(playerName) {
-    return this.data.players[playerName] || null;
+    return this.data.players?.[playerName] || null;
   }
 
   getAllPlayers() {
-    return this.data.players;
+    return this.data.players || {};
   }
 }
 
