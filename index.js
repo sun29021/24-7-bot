@@ -1,5 +1,5 @@
 "use strict";
-
+const DISABLE_AUTO_CHAT = true;
 const { addLog, getLogs } = require("./logger");
 const mineflayer = require("mineflayer");
 const { Movements, pathfinder, goals } = require("mineflayer-pathfinder");
@@ -2335,7 +2335,7 @@ bot.on('death', async (reason) => {
     
     const analysis = await nekoChatHandler.analyzeGameEvent(event);
     
-    if (analysis && analysis.shouldChat && analysis.message) {
+    if (analysis && analysis.shouldChat && analysis.message && !DISABLE_AUTO_CHAT) {
       setTimeout(() => {
         bot.chat(analysis.message);
         addLog(`[NEKO Event] Death reaction: ${analysis.message}`);
@@ -2371,7 +2371,7 @@ bot.on('health', async () => {
     
     const analysis = await nekoChatHandler.analyzeGameEvent(event);
     
-    if (analysis && analysis.shouldChat && analysis.message) {
+    if (analysis && analysis.shouldChat && analysis.message && !DISABLE_AUTO_CHAT) {
       bot.chat(analysis.message);
       addLog(`[NEKO Event] Damage reaction (health ${bot.health}/20): ${analysis.message}`);
     }
@@ -2446,7 +2446,7 @@ addInterval(async () => {
         
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
-        if (analysis && analysis.shouldChat && analysis.message) {
+        if (analysis && analysis.shouldChat && analysis.message && !DISABLE_AUTO_CHAT) {
           bot.chat(analysis.message);
           addLog(`[NEKO Event] Mob encounter (${mobs.length} mobs): ${analysis.message}`);
         }
@@ -2493,7 +2493,7 @@ bot.on('diggingCompleted', (block) => {
         
         const analysis = await nekoChatHandler.analyzeGameEvent(event);
         
-        if (analysis && analysis.shouldChat && analysis.message) {
+        if (analysis && analysis.shouldChat && analysis.message && !DISABLE_AUTO_CHAT) {
           setTimeout(() => {
             bot.chat(analysis.message);
             addLog(`[NEKO Event] Mined ${oreType}: ${analysis.message}`);
