@@ -1181,14 +1181,16 @@ function getReconnectDelay() {
     return throttleDelay;
   }
 
-  // FIX: read auto-reconnect-delay from settings as base delay
-  const baseDelay = config.utils["auto-reconnect-delay"] || 3000;
-  const maxDelay = config.utils["max-reconnect-delay"] || 30000;
+  // FIX: INCREASED base delay from 3000ms to 15000ms (15 seconds)
+  // Minecraft servers need 10-15s to fully clear the old session before allowing reconnect
+  // This prevents "duplicate_login" kicks
+  const baseDelay = config.utils["auto-reconnect-delay"] || 15000;
+  const maxDelay = config.utils["max-reconnect-delay"] || 120000; // 2 minutes
   const delay = Math.min(
     baseDelay * Math.pow(2, botState.reconnectAttempts),
     maxDelay,
   );
-  const jitter = Math.floor(Math.random() * 2000);
+  const jitter = Math.floor(Math.random() * 3000);
   return delay + jitter;
 }
 
@@ -1211,6 +1213,10 @@ function createBot() {
     clearAllIntervals();
     try {
       bot.removeAllListeners();
+      // FIX: Force close the socket to prevent EPIPE errors
+      if (bot.socket) {
+        bot.socket.destroy();
+      }
       bot.end();
     } catch (e) {
       addLog("[Cleanup] Error ending previous bot:", e.message);
@@ -1248,6 +1254,9 @@ function createBot() {
         addLog("[Bot] Connection timeout - no spawn received");
         try {
           bot.removeAllListeners();
+          if (bot.socket) {
+            bot.socket.destroy();
+          }
           bot.end();
         } catch (e) {
           /* ignore */
@@ -2598,6 +2607,15 @@ addInterval(() => {
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
 
+      // FIX: Force-close socket immediately to prevent ghost connections
+      try {
+        if (bot && bot.socket) {
+          bot.socket.destroy();
+        }
+      } catch (e) {
+        // ignore
+      }
+
       if (
         config.discord &&
         config.discord.events &&
@@ -2658,6 +2676,20 @@ addInterval(() => {
 
 function scheduleReconnect() {
   clearBotTimeouts();
+
+  // FIX: Properly close the bot's socket before scheduling reconnect
+  if (bot) {
+    try {
+      bot.removeAllListeners();
+      if (bot.socket) {
+        bot.socket.destroy();
+      }
+      bot.end();
+    } catch (e) {
+      addLog("[Cleanup] Error force-closing bot socket:", e.message);
+    }
+    bot = null;
+  }
 
   // FIX: don't stack reconnect if already waiting
   if (isReconnecting) {
