@@ -14,6 +14,8 @@ const learningSystem = require('./learningSystem');
 const experienceRecorder = require('./experienceRecorder');
 const strategyAdaptor = require('./strategyAdaptor');
 const nekoBehavior = require('./nekoBehavior');
+const skinCommandHandler = require('./skinCommandHandler');
+const skinManager = require('./skinManager');
 
 // ============================================================
 // EXPRESS SERVER - Keep Render/Aternos alive
@@ -3126,7 +3128,12 @@ function chatModule(bot) {
   bot.on("chat", (username, message) => {
     if (!bot || username === bot.username) return;
 
-    try {
+try {
+      // ===== SKIN COMMAND HANDLER - NEW =====
+      if (skinCommandHandler.handleCommand(bot, username, message)) {
+        return; // Command was handled, don't process further
+      }
+
       // FIX: send chat events to Discord if enabled
       if (
         config.discord &&
@@ -3159,6 +3166,12 @@ rl.on("line", (line) => {
   }
 
   const trimmed = line.trim();
+  
+  // ===== SKIN COMMAND HANDLER - NEW =====
+  if (skinCommandHandler.handleConsoleCommand(bot, trimmed)) {
+    return; // Skin command was handled
+  }
+  
   if (trimmed.startsWith("say ")) {
     bot.chat(trimmed.slice(4));
   } else if (trimmed.startsWith("cmd ")) {
@@ -3346,6 +3359,15 @@ addLog(`Version: ${config.server.version}`);
 addLog(
   `Auto-Reconnect: ${config.utils["auto-reconnect"] ? "Enabled" : "Disabled"}`,
 );
+addLog("=".repeat(50));
+
+// ===== SKIN SYSTEM STARTUP LOGGING - NEW =====
+const skinInfo = skinCommandHandler.listSkins();
+addLog("SKIN SYSTEM INITIALIZED");
+addLog(`Current Skin: ${skinInfo.current}`);
+addLog(`Available Skins: ${skinInfo.available.join(", ") || "None"}`);
+addLog(`Owner: DJ_Kuddus`);
+addLog(`Commands: !skin [name] (in-game) | skin [name] (console)`);
 addLog("=".repeat(50));
 
 createBot();
