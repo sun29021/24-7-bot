@@ -1184,8 +1184,8 @@ function getReconnectDelay() {
   // FIX: INCREASED base delay from 3000ms to 15000ms (15 seconds)
   // Minecraft servers need 10-15s to fully clear the old session before allowing reconnect
   // This prevents "duplicate_login" kicks
-  const baseDelay = config.utils["auto-reconnect-delay"] || 15000;
-  const maxDelay = config.utils["max-reconnect-delay"] || 120000; // 2 minutes
+  const baseDelay = config.utils["auto-reconnect-delay"] || 25000;
+  const maxDelay = config.utils["max-reconnect-delay"] || 240000; // 2 minutes
   const delay = Math.min(
     baseDelay * Math.pow(2, botState.reconnectAttempts),
     maxDelay,
